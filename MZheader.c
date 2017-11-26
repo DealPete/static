@@ -47,8 +47,9 @@ int main(int argc, char *argv[]) {
 	int exe_start = 16*header.hdrsize;
 	int entry_point = exe_start + 16*header.cs;
 
-    if (!strcmp(header.signature, "MZ"))
-	printf("File should start with Mark Zbikowski's initials. This is not a DOS .EXE file.");
+    if (!strcmp(header.signature, "MZ")) {
+		printf("File should start with Mark Zbikowski's initials. This is not a DOS .EXE file.");
+	}
 
 	printf("Number of blocks: %d\n", header.nblocks);
     printf("Number of entries in relocation table: %d\n", header.nreloc);
