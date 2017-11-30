@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 pub struct Program {
     pub length: usize,
+    pub entry_point: usize,
     pub instructions: HashMap<usize, Instruction>
 }
 
@@ -11,7 +12,12 @@ impl fmt::Display for Program {
         let mut output = String::new();
         for i in 0..self.length {
             if let Some(instruction) = self.instructions.get(&i) {
-                output.push_str(format!("{}\n", instruction).as_str());
+                output.push_str(format!("{}{}\n", instruction,
+                    if i == self.entry_point {
+                        "\t; program entry point"
+                    } else {
+                        ""
+                    }).as_str());
             }
         }
         return write!(f, "{}", output);
@@ -20,28 +26,35 @@ impl fmt::Display for Program {
 
 pub struct Instruction {
     pub position: usize,
-    pub previous: Option<usize>,
+    pub next: Option<usize>,
     pub label: bool,
     pub seg_prefix: Option<Register>,
     pub rep_prefix: Option<Mnemonic>,
     pub mnemonic: Mnemonic,
-    pub size: u8,
-    pub op1: Operand,
-    pub op2: Operand
+    pub length: u8,
+    pub op1: Option<Operand>,
+    pub op2: Option<Operand>
 }
 
 impl Instruction {
     pub fn new(mnemonic: Mnemonic) -> Instruction {
         Instruction {
             position: 0,
-            previous: None,
+            next: None,
             seg_prefix: None,
             rep_prefix: None,
             mnemonic: mnemonic,
-            size: 0,
+            length: 0,
             label: false,
-            op1: Operand::None,
-            op2: Operand::None
+            op1: None,
+            op2: None
+        }
+    }
+
+    pub fn is_rel_jump(&self) -> bool {
+        self.mnemonic.is_jump() && match self.op1 {
+            Some(Operand::Imm8(_)) | Some(Operand::Imm16(_)) => true,
+            _ => false
         }
     }
 }
@@ -57,32 +70,34 @@ impl fmt::Display for Instruction {
         if let Some(ref rep_prefix) = self.rep_prefix {
             prefix.push_str(format!("{:?} ", rep_prefix).as_str());
         }
-        if self.mnemonic.is_jump() {
-            let mut target = self.position + self.size as usize;
-            if let Operand::Imm8(rel) = self.op1 {
-                target = add_rel8(target, rel);
-            } else if let Operand::Imm16(rel) = self.op1 {
-                target = add_rel16(target, rel);
-            } else {
-                panic!("Wrong operand for jump instruction.");
+        if self.is_rel_jump() {
+            let mut target = self.position + self.length as usize;
+            match self.op1 {
+                Some(Operand::Imm8(rel)) => target = add_rel8(target, rel),
+                Some(Operand::Imm16(rel)) => target = add_rel16(target, rel),
+                _ => panic!("Wrong operand for relative jump.")
             }
             write!(f, "{}{:?} <{:x}>", prefix, self.mnemonic, target)
-        } else if let Operand::None = self.op1 {
-            write!(f, "{}{:?}", prefix, self.mnemonic)
-        } else if let Operand::None = self.op2 {
-            write!(f, "{}{:?} {}", prefix, self.mnemonic,
-                self.op1.format(&self.seg_prefix))
         } else {
-            write!(f, "{}{:?} {}, {}", prefix, self.mnemonic,
-                self.op1.format(&self.seg_prefix),
-                self.op2.format(&self.seg_prefix))
+            match self.op1 {
+                None => write!(f, "{}{:?}", prefix, self.mnemonic),
+                Some(op1) => match self.op2 {
+                    None => write!(f, "{}{:?} {}", prefix, self.mnemonic,
+                        op1.format(&self.seg_prefix)),
+                    Some(op2) =>
+                        write!(f, "{}{:?} {}, {}", prefix, self.mnemonic,
+                            op1.format(&self.seg_prefix),
+                            op2.format(&self.seg_prefix))
+                }
+            }
         }
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum Operand {
-    None,
-    Register(Register),
+    Register8(Register),
+    Register16(Register),
     Imm8(i8),
     Imm16(i16),
     Ptr16(u16),
@@ -101,8 +116,8 @@ impl Operand {
             &None => String::from("")
         };
         match self {
-            &Operand::None => format!(""),
-            &Operand::Register(ref reg) => format!("{:?}", reg),
+            &Operand::Register8(ref reg) |
+                &Operand::Register16(ref reg) => format!("{:?}", reg),
             &Operand::Imm8(val) => format!("{:02x}", val),
             &Operand::Imm16(val) => format!("{:04x}", val),
             &Operand::Ptr16(val) => format!("[{}{:04x}]", pfx, val),
@@ -121,11 +136,12 @@ impl Operand {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Mnemonic {
     ADC, ADD, AND, CALL, CMP, DEC, INC, INT, JMP, LEA, MOV, NEG, NOP, NOT,
     OR, POP, PUSH, RET, SBB, SUB, TEST, XCHG, XOR,
     CLC, STC, CLI, STI, CLD, STD,
+    DAA, DAS, AAA, AAS,
     IN, OUT,
     JO, JNO, JB, JNB, JZ, JNZ, JBE, JNBE, JS, JNS, JP, JNP, JL, JNL, JLE, JNLE,
     LOOPNZ, LOOPZ, LOOP, JCXZ,
@@ -149,10 +165,10 @@ impl Mnemonic {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Register {
     AX, AL, AH, BX, BL, BH, CX, CL, CH, DX, DL, DH,
-    BP, SP, SS, CS, DS, ES, DI, SI, FS, GS
+    BP, SP, SS, CS, DS, ES, DI, SI, FS, GS, IP
 }
 
 pub fn get_word(buffer : &Vec<u8>, offset: usize) -> u16 {

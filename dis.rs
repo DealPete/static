@@ -3,15 +3,41 @@ use defs::*;
 use std::collections::HashMap;
 
 pub fn decode_file(buffer: Vec<u8>, entry: usize) -> Program {
-	let mut instructions : HashMap<usize, Instruction> = HashMap::new();
-    let mut offset : usize;
-	let mut previous : Option<usize> = None;
+    let mut program = Program {
+        length: buffer.len(),
+        entry_point: entry,
+        instructions: HashMap::new()
+    };
 
+    let mut loose_ends = walk_buffer(&buffer, &mut program, entry);
+    
+    while let Some(loose_end) = loose_ends.pop() {
+        if let Some(instruction) = program.instructions.get(&loose_end) {
+            match instruction.mnemonic {
+                Mnemonic::INT => if !dos::should_continue(&instruction, &program) {
+                    continue;
+                },
+                _ => ()
+            }
+
+        } else {
+            panic!("Loose end not found in program!");
+        }
+        let mut new_loose_ends = walk_buffer(&buffer, &mut program, loose_end);
+        loose_ends.append(&mut new_loose_ends);
+    }
+
+    return program;
+}
+
+pub fn walk_buffer(buffer: &Vec<u8>, program: &mut Program, entry: usize) -> Vec<usize> {
+    let mut offset : usize;
+    let mut loose_ends = Vec::new();
     let mut jump_destinations : Vec<usize> = Vec::new();
     jump_destinations.push(entry);
 
     while let Some(dest) = jump_destinations.pop() {
-        if let Some(instruction) = instructions.get_mut(&dest) {
+        if let Some(instruction) = program.instructions.get_mut(&dest) {
             instruction.label = true;
             continue;
         }
@@ -23,57 +49,51 @@ pub fn decode_file(buffer: Vec<u8>, entry: usize) -> Program {
             let mut inst = match decode_instruction(&buffer, offset) {
                 Ok(instruction) => instruction,
                 Err(err) => {
-                   println!("{}", Program {
-                       length: buffer.len(),
-                       instructions: instructions
-                   });
+                   println!("{}", program);
                    panic!(err);
                 }
             };
             inst.position = offset;
             inst.label = needs_label;
             needs_label = false;
-            inst.previous = previous;
-            previous = Some(offset);
-            let next_ip = inst.size as usize + offset;
-            if next_ip >= buffer.len() {
+            let next_offset = inst.length as usize + offset;
+            if next_offset >= buffer.len() {
                 cont = false;
             } else {
-                match instructions.get(&next_ip) {
+                match program.instructions.get(&next_offset) {
                     None => (),
                     Some(_) => cont = false
                 }
-                if let Mnemonic::JMP = inst.mnemonic {
-                    cont = false;
-                }
-                if let Mnemonic::RET = inst.mnemonic {
+                if inst.mnemonic == Mnemonic::JMP ||
+                    inst.mnemonic == Mnemonic::RET {
                     cont = false;
                 }
                 if inst.mnemonic.is_jump() {
                     match inst.op1 {
-                        Operand::Imm8(rel)
-                            => jump_destinations.push(add_rel8(next_ip, rel)),
-                        Operand::Imm16(rel)
-                            => jump_destinations.push(add_rel16(next_ip, rel)),
-                        _ => panic!("Invalid operand for jump!")
+                        Some(Operand::Imm8(rel))
+                            => jump_destinations.push(add_rel8(next_offset, rel)),
+                        Some(Operand::Imm16(rel))
+                            => jump_destinations.push(add_rel16(next_offset, rel)),
+                        Some(Operand::PtrReg(reg))
+                            => loose_ends.push(inst.position),
+                        _ => panic!("unimplemented operand for jump!")
                     }
                 }
             }
-            if let Mnemonic::INT = inst.mnemonic {
-                cont = match dos::should_continue(&inst, &instructions) {
-                    Some(should) => should,
-                    None => panic!("Couldn't determine if INT at 0x{:x} ends program.", offset)
-                };
+            if inst.mnemonic == Mnemonic::INT {
+                loose_ends.push(inst.position);
+                cont = false;
             }
-            instructions.insert(offset, inst);
-            offset = next_ip;
+            inst.next = match cont {
+                true => Some(next_offset),
+                false => None
+            };
+            program.instructions.insert(offset, inst);
+            offset = next_offset;
         }
     }
 
-    return Program {
-        length: buffer.len(),
-        instructions: instructions
-    };
+    return loose_ends;
 }
 
 fn decode_instruction(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
@@ -86,6 +106,8 @@ fn decode_instruction(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, St
 				Ok(decode_push_pop_segreg(code)),
             0x26 | 0x2e | 0x36 | 0x3e =>
                 decode_with_segment_prefix(&buffer, offset),
+            0x27 | 0x2f | 0x37 | 0x3f =>
+                decode_bcd_inst(code),
             0x40...0x5f => decode_inc_dec_push_pop_reg(&buffer, offset),
 			0x70...0x7f | 0xe0...0xe3 | 0xeb =>
                 Ok(decode_jump_imm8(&buffer, offset)),
@@ -127,7 +149,7 @@ fn decode_with_segment_prefix(buffer: &Vec<u8>, offset: usize) -> Result<Instruc
                 0x3e => Some(Register::DS),
                 _ => return Err(String::from("Improper prefix"))
             };
-            inst.size += 1;
+            inst.length += 1;
             return Ok(inst);
         }
     }
@@ -142,7 +164,7 @@ fn decode_with_rep_prefix(buffer: &Vec<u8>, offset: usize) -> Result<Instruction
                 0xf3 => Some(Mnemonic::REPZ),
                 _ => return Err(String::from("Improper prefix"))
             };
-            inst.size += 1;
+            inst.length += 1;
             return Ok(inst);
         }
     }
@@ -169,22 +191,22 @@ fn decode_regular_inst(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, S
 	match code & 7 {
 		0...3 =>
 			{
-			let (op1, op2, size) = decode_mod_rm(buffer, offset + 1, code & 1, code & 2);
+			let (op1, op2, length) = decode_mod_rm(buffer, offset + 1, code & 1, code & 2);
 			inst.op1 = op1;
 			inst.op2 = op2;
-			inst.size = size + 1;
+			inst.length = length + 1;
 			},
 		4 =>
 			{
-			inst.op1 = Operand::Register(Register::AL);
-			inst.op2 = Operand::Imm8(buffer[offset + 1] as i8);
-			inst.size = 2;
+			inst.op1 = Some(Operand::Register8(Register::AL));
+			inst.op2 = Some(Operand::Imm8(buffer[offset + 1] as i8));
+			inst.length = 2;
 			},
 		5 => 
 			{
-			inst.op1 = Operand::Register(Register::AX);
-			inst.op2 = Operand::Imm16(get_word(&buffer, offset + 1) as i16);
-			inst.size = 3;
+			inst.op1 = Some(Operand::Register16(Register::AX));
+			inst.op2 = Some(Operand::Imm16(get_word(&buffer, offset + 1) as i16));
+			inst.length = 3;
 			},
 		_ => panic!("Improper code type")
 	}
@@ -197,17 +219,30 @@ fn decode_push_pop_segreg(code: u8) -> Instruction {
 		0 => Mnemonic::PUSH,
 		_ => Mnemonic::POP
 	});
-	inst.op1 = match code & 0x18 {
-		0x00 => Operand::Register(Register::ES),
-		0x08 => Operand::Register(Register::CS),
-		0x10 => Operand::Register(Register::SS),
-		0x18 => Operand::Register(Register::DS),
+	inst.op1 = Some(match code & 0x18 {
+		0x00 => Operand::Register16(Register::ES),
+		0x08 => Operand::Register16(Register::CS),
+		0x10 => Operand::Register16(Register::SS),
+		0x18 => Operand::Register16(Register::DS),
 		_ => panic!("unknown segment register")
-	};
-	inst.size = 1;
+	});
+	inst.length = 1;
 	return inst;
 }
 
+fn decode_bcd_inst(code: u8) -> Result<Instruction, String> {
+    let mut inst = Instruction::new(match code {
+        0x27 => Mnemonic::DAA,
+        0x2f => Mnemonic::DAS,
+        0x37 => Mnemonic::AAA,
+        0x3f => Mnemonic::AAS,
+        _ => panic!("not a bcd instruction")
+    });
+    inst.length = 1;
+    return Ok(inst);
+}
+
+        
 fn decode_inc_dec_push_pop_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
     let mut inst = Instruction::new(match buffer[offset] {
         0x40...0x47 => Mnemonic::INC,
@@ -216,8 +251,8 @@ fn decode_inc_dec_push_pop_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instru
         0x58...0x5f => Mnemonic::POP,
         _ => return Err(String::from("Not a inc dec push pop instruction!"))
     });
-    inst.op1 = Operand::Register(reg16(buffer[offset] & 7));
-    inst.size = 1;
+    inst.op1 = Some(Operand::Register16(reg16(buffer[offset] & 7)));
+    inst.length = 1;
     return Ok(inst);
 }
 
@@ -246,8 +281,8 @@ fn decode_jump_imm8(buffer: &Vec<u8>, offset: usize) -> Instruction {
 		0xeb => Mnemonic::JMP,
 		_ => panic!("Not a jump instruction!")
 	});
-	inst.op1 = Operand::Imm8(buffer[offset + 1] as i8);
-	inst.size = 2;
+	inst.op1 = Some(Operand::Imm8(buffer[offset + 1] as i8));
+	inst.length = 2;
     return inst;
 }
 
@@ -267,14 +302,14 @@ fn decode_imm_inst(buffer: &Vec<u8>, offset: usize) -> Instruction {
         }
 	);
 	
-    let (op, _, size) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
+    let (op, _, length) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
     inst.op1 = op;
     if code == 0x81 {
-        inst.op2 = Operand::Imm16(get_word(&buffer, offset + 1 + size as usize) as i16);
-        inst.size = size + 3;
+        inst.op2 = Some(Operand::Imm16(get_word(&buffer, offset + 1 + length as usize) as i16));
+        inst.length = length + 3;
     } else {
-        inst.op2 = Operand::Imm8(buffer[offset + 1 + size as usize] as i8);
-        inst.size = size + 2;
+        inst.op2 = Some(Operand::Imm8(buffer[offset + 1 + length as usize] as i8));
+        inst.length = length + 2;
     }
     return inst;
 }
@@ -285,18 +320,18 @@ fn decode_test_xchg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, Stri
         0 => Mnemonic::TEST,
         _ => Mnemonic::XCHG
     });
-    let (op1, op2, size) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
+    let (op1, op2, length) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
     inst.op1 = op1;
     inst.op2 = op2;
-    inst.size = size + 1;
+    inst.length = length + 1;
     return Ok(inst);
 }
 
 fn decode_move_segment_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(Mnemonic::MOV);
-    let (op, _, size) = decode_mod_rm(buffer, offset + 1, 1, 0);
-    let segment = Operand::Register(seg_reg(buffer[offset + 1] & 0x38));
+    let (op, _, length) = decode_mod_rm(buffer, offset + 1, 1, 0);
+    let segment = Some(Operand::Register16(seg_reg(buffer[offset + 1] & 0x38)));
     match code {
         0x8c => {
             inst.op1 = op;
@@ -308,42 +343,42 @@ fn decode_move_segment_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instructio
             },
         _ => panic!("incorrect opcode")
     }
-    inst.size = size + 1;
+    inst.length = length + 1;
     return Ok(inst);
 }
 
 fn decode_lea(buffer: &Vec<u8>, offset:usize) -> Result<Instruction, String> {
     let mut inst = Instruction::new(Mnemonic::LEA);
-    let (op1, op2, size) = decode_mod_rm(buffer, offset + 1, 1, 2);
+    let (op1, op2, length) = decode_mod_rm(buffer, offset + 1, 1, 2);
     inst.op1 = op1;
     inst.op2 = op2;
-    inst.size = 1 + size;
+    inst.length = 1 + length;
     return Ok(inst);
 }
 
 fn decode_nop() -> Result<Instruction, String> {
     let mut inst = Instruction::new(Mnemonic::NOP);
-    inst.size = 1;
+    inst.length = 1;
     return Ok(inst);
 }
 
 fn decode_xchg_ax(code: u8) -> Result<Instruction, String> {
     let mut inst = Instruction::new(Mnemonic::XCHG);
-    inst.op1 = Operand::Register(reg16(code & 7));
-    inst.op2 = Operand::Register(Register::AX);
-    inst.size = 1;
+    inst.op1 = Some(Operand::Register16(reg16(code & 7)));
+    inst.op2 = Some(Operand::Register16(Register::AX));
+    inst.length = 1;
     return Ok(inst);
 }
 
 fn decode_mov_moffset(buffer: &Vec<u8>, offset: usize) -> Instruction {
     let code = buffer[offset];
     let mut inst = Instruction::new(Mnemonic::MOV);
-    let op1 = if code & 1 != 0 {
-        Operand::Register(Register::AL)
+    let op1 = Some(if code & 1 != 0 {
+        Operand::Register8(Register::AL)
     } else {
-        Operand::Register(Register::AX)
-    };
-    let op2 = Operand::Ptr16(get_word(buffer, offset + 1));
+        Operand::Register16(Register::AX)
+    });
+    let op2 = Some(Operand::Ptr16(get_word(buffer, offset + 1)));
     if code & 2 != 0 {
         inst.op1 = op2;
         inst.op2 = op1;
@@ -351,7 +386,7 @@ fn decode_mov_moffset(buffer: &Vec<u8>, offset: usize) -> Instruction {
         inst.op1 = op1;
         inst.op2 = op2;
     }
-    inst.size = 3;
+    inst.length = 3;
     return inst;
 }
 
@@ -370,24 +405,24 @@ fn decode_string_op(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, Stri
         0xaf => Mnemonic::SCASW,
         _ => return Err(String::from("Not a string instruction!"))
     });
-    inst.size = 1;
+    inst.length = 1;
     return Ok(inst);
 }
 
 fn decode_test_ax(buffer: &Vec<u8>, offset:usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(Mnemonic::TEST);
-    inst.op1 = Operand::Register(match code {
-        0xa8 => Register::AL,
-        0xa9 => Register::AX,
+    inst.op2 = match code {
+        0xa8 => Some(Operand::Register8(Register::AL)),
+        0xa9 => Some(Operand::Register16(Register::AX)),
         _ => panic!("wrong opcode")
-    });
-    inst.op1 = match code {
+    };
+    inst.op2 = Some(match code {
         0xa8 => Operand::Imm8(buffer[offset + 1] as i8),
         0xa9 => Operand::Imm16(get_word(buffer, offset + 1) as i16),
         _ => panic!("wrong opcode")
-    };
-    inst.size = 2 + code & 1;
+    });
+    inst.length = 2 + code & 1;
     return Ok(inst);
 }
 
@@ -397,15 +432,15 @@ fn decode_mov_imm_reg(buffer: &Vec<u8>, offset: usize) -> Instruction {
 	match code & 8 {
 		0 =>
 			{
-			inst.op1 = Operand::Register(reg8(code & 7));
-			inst.op2 = Operand::Imm8(buffer[offset + 1] as i8);
-			inst.size = 2;
+			inst.op1 = Some(Operand::Register8(reg8(code & 7)));
+			inst.op2 = Some(Operand::Imm8(buffer[offset + 1] as i8));
+			inst.length = 2;
 			},
 		_ =>
 			{
-			inst.op1 = Operand::Register(reg16(code & 7));
-			inst.op2 = Operand::Imm16(get_word(&buffer, offset + 1) as i16);
-			inst.size = 3;
+			inst.op1 = Some(Operand::Register16(reg16(code & 7)));
+			inst.op2 = Some(Operand::Imm16(get_word(&buffer, offset + 1) as i16));
+			inst.length = 3;
 			}
 	}
 	return inst;
@@ -414,10 +449,10 @@ fn decode_mov_imm_reg(buffer: &Vec<u8>, offset: usize) -> Instruction {
 fn decode_ret(buffer: &Vec<u8>, offset: usize) -> Instruction {
     let mut inst = Instruction::new(Mnemonic::RET);
     if buffer[offset] & 1 == 0 {
-        inst.op1 = Operand::Imm16(buffer[offset + 1] as i16);
-        inst.size = 3;
+        inst.op1 = Some(Operand::Imm16(buffer[offset + 1] as i16));
+        inst.length = 3;
     } else {
-        inst.size = 1;
+        inst.length = 1;
     }
     return inst;
 }
@@ -425,18 +460,18 @@ fn decode_ret(buffer: &Vec<u8>, offset: usize) -> Instruction {
 fn decode_mov_imm_reg_mem(buffer: &Vec<u8>, offset: usize) -> Instruction {
     let mut inst = Instruction::new(Mnemonic::MOV);
     let size = buffer[offset] & 1;
-    let (op, _, mod_rm_size) = decode_mod_rm(buffer, offset + 1, size, 0);
+    let (op, _, mod_rm_length) = decode_mod_rm(buffer, offset + 1, size, 0);
     inst.op1 = op;
     match size {
         0 =>
             {
-            inst.op2 = Operand::Imm8(buffer[offset + 1 + mod_rm_size as usize] as i8);
-            inst.size = 1 + mod_rm_size + 1;
+            inst.op2 = Some(Operand::Imm8(buffer[offset + 1 + mod_rm_length as usize] as i8));
+            inst.length = 1 + mod_rm_length + 1;
             },
         _ =>
             {
-            inst.op2 = Operand::Imm16(get_word(buffer, offset + 1 + mod_rm_size as usize) as i16);
-            inst.size = 1 + mod_rm_size + 2;
+            inst.op2 = Some(Operand::Imm16(get_word(buffer, offset + 1 + mod_rm_length as usize) as i16));
+            inst.length = 1 + mod_rm_length + 2;
             }
     }
     return inst;
@@ -444,8 +479,8 @@ fn decode_mov_imm_reg_mem(buffer: &Vec<u8>, offset: usize) -> Instruction {
 
 fn decode_int(buffer: &Vec<u8>, offset: usize) -> Instruction {
 	let mut inst = Instruction::new(Mnemonic::INT);
-	inst.op1 = Operand::Imm8(buffer[offset + 1] as i8);
-	inst.size = 2;
+	inst.op1 = Some(Operand::Imm8(buffer[offset + 1] as i8));
+	inst.length = 2;
 	return inst;
 }
 
@@ -462,14 +497,14 @@ fn decode_shift_rotate(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, S
         0x38 => Mnemonic::SAR,
         _ => panic!("incorrect extension code!")
     });
-    let (op, _, size) = decode_mod_rm(buffer, offset, code & 1, 0);
+    let (op, _, length) = decode_mod_rm(buffer, offset, code & 1, 0);
     inst.op1 = op;
-    inst.op2 = if code & 2 == 0 {
+    inst.op2 = Some(if code & 2 == 0 {
         Operand::Imm8(0x1)
     } else {
-        Operand::Register(Register::CL)
-    };
-    inst.size = 1 + size;
+        Operand::Register8(Register::CL)
+    });
+    inst.length = 1 + length;
     return Ok(inst);
 }
 
@@ -482,13 +517,13 @@ fn decode_in_out(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String>
             Mnemonic::OUT
         }
     );
-    let (op, size) = if code & 8 == 0 {
+    let (op, length) = if code & 8 == 0 {
         (Operand::Imm8(buffer[offset + 1] as i8), 2)
     } else {
-        (Operand::Register(Register::DX), 1)
+        (Operand::Register16(Register::DX), 1)
     };
-    inst.op1 = op;
-    inst.size = size;
+    inst.op1 = Some(op);
+    inst.length = length;
     return Ok(inst);
 }
 
@@ -499,22 +534,28 @@ fn decode_call_jump_rel16(buffer: &Vec<u8>, offset: usize) -> Instruction {
             _ => Mnemonic::JMP
         }
     );
-    inst.op1 = Operand::Imm16(get_word(buffer, offset + 1) as i16);
-    inst.size = 3;
+    inst.op1 = Some(Operand::Imm16(get_word(buffer, offset + 1) as i16));
+    inst.length = 3;
     return inst;
 }
 
 fn decode_f6_f7(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+    let code = buffer[offset];
     let extension = (buffer[offset + 1] & 0x38) >> 3;
-    let (op, _, r_size) = decode_mod_rm(buffer, offset + 1, buffer[offset] & 1, 0);
+    let (op, _, r_length) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
     let mut inst;
     match extension {
         0 | 1 =>
             {
             inst = Instruction::new(Mnemonic::TEST);
             inst.op1 = op;
-            inst.op2 = Operand::Imm16(get_word(buffer, offset + 1 + r_size as usize) as i16);
-            inst.size = 3 + r_size;
+            if code & 1 == 0 {
+                inst.op2 = Some(Operand::Imm8(buffer[offset + 1] as i8));
+                inst.length = 2 + r_length;
+            } else {
+                inst.op2 = Some(Operand::Imm16(get_word(buffer, offset + 1 + r_length as usize) as i16));
+                inst.length = 3 + r_length;
+            }
             },
         _ =>
             {
@@ -528,7 +569,7 @@ fn decode_f6_f7(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> 
                 _ => panic!("improper extension!")
             });
             inst.op1 = op;
-            inst.size = 1 + r_size;
+            inst.length = 1 + r_length;
             }
     }
     return Ok(inst);
@@ -546,7 +587,7 @@ fn decode_clear_set_flags(code: u8) -> Result<Instruction, String> {
             _ => panic!("not a clear set instruction")
         }
     );
-    inst.size = 1;
+    inst.length = 1;
     return Ok(inst);
 }
 
@@ -558,15 +599,15 @@ fn decode_inc_dec_imm(buffer: &Vec<u8>, offset: usize) -> Instruction {
 		}
 	);
 	
-	let (op, _, size) = decode_mod_rm(buffer, offset + 1, buffer[offset] & 1, 0);
+	let (op, _, length) = decode_mod_rm(buffer, offset + 1, buffer[offset] & 1, 0);
 	inst.op1 = op;
-	inst.size = 1 + size;
+	inst.length = 1 + length;
 	return inst;
 }
 
 fn decode_ff(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
     let extension = (buffer[offset + 1] & 0x38) >> 3;
-    let (op, _, size) = decode_mod_rm(buffer, offset + 1, 1, 0);
+    let (op, _, length) = decode_mod_rm(buffer, offset + 1, 1, 0);
     let mut inst = Instruction::new(
         match extension {
             0x00 => Mnemonic::INC,
@@ -578,19 +619,19 @@ fn decode_ff(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
         }
     );
     match extension {
-        0x2...0x5 => panic!("indirect branching not implemented yet."),
+        0x3 | 0x5 => return Err(format!("indirect branch at {:x}", offset)),
         _ => ()
     }
     inst.op1 = op;
-    inst.size = size + 1;
+    inst.length = length + 1;
     return Ok(inst);
 }
 
-fn decode_mod_rm(buffer: &Vec<u8>, offset: usize, size: u8, dir: u8) -> (Operand, Operand, u8) {
+fn decode_mod_rm(buffer: &Vec<u8>, offset: usize, size: u8, dir: u8) -> (Option<Operand>, Option<Operand>, u8) {
     let reg = |op| {
         match size {
-            0 => Operand::Register(reg8(op)),
-            1 => Operand::Register(reg16(op)),
+            0 => Operand::Register8(reg8(op)),
+            1 => Operand::Register16(reg16(op)),
             _ => panic!("Improper size")
         }
     };
@@ -598,7 +639,7 @@ fn decode_mod_rm(buffer: &Vec<u8>, offset: usize, size: u8, dir: u8) -> (Operand
 	let mode = byte >> 6;
 	let op1 = (byte & 0x38) >> 3;
 	let op2 = byte & 7;
-    let (r_op1, r_op2, r_size) = match mode {
+    let (r_op1, r_op2, r_length) = match mode {
         0 => match op2
             {
             0 => (reg(op1), Operand::PtrRegReg(Register::BX, Register::SI), 1),
@@ -637,9 +678,9 @@ fn decode_mod_rm(buffer: &Vec<u8>, offset: usize, size: u8, dir: u8) -> (Operand
         _ => panic!("Unknown mode!")
     };
     if dir == 0 {
-        (r_op2, r_op1, r_size)
+        (Some(r_op2), Some(r_op1), r_length)
     } else {
-        (r_op1, r_op2, r_size)
+        (Some(r_op1), Some(r_op2), r_length)
     }
 }
 
