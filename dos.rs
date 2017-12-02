@@ -1,19 +1,21 @@
 use defs::*;
 use emu;
-use std::collections::HashMap;
 
-pub fn should_continue(instruction: &Instruction, program: &Program) -> bool {
+pub fn does_int_end_program(instruction: &Instruction) -> bool {
     if let Some(Operand::Imm8(func)) = instruction.op1 {
-        if func == 0x20 {
-            return false;
-        } else if func != 0x21 {
-            return true;
-        }
-        return match emu::find_ah(instruction, program) {
-            Some(reg_ah) => reg_ah != 0 && reg_ah != 0x4c,
-            None =>
-                panic!("Couldn't determine if INT at 0x{:x} ends program.", instruction.position)
-        };
+        return func == 0x20;
     }
-    panic!("Expected first operand to be imm8");
+    panic!("Expected first operand of INT to be imm8");
+}
+
+pub fn is_int_loose_end(instruction: &Instruction) -> bool {
+    if let Some(Operand::Imm8(func)) = instruction.op1 {
+        return func == 0x21;
+    }
+    panic!("Expected first operand of INT to be imm8");
+}
+
+pub fn does_int21_always_end_program(inst_index: usize, program: &Program) -> bool {
+    let values = vec!(0, 0x4c).into_iter().collect();
+    return emu::reg_at_is_always_in(Register::AH, inst_index, values, program);
 }

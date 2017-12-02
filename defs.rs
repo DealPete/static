@@ -2,7 +2,7 @@ use std::fmt;
 use std::collections::HashMap;
 
 pub struct Program {
-    pub length: usize,
+    pub buffer: Vec<u8>,
     pub entry_point: usize,
     pub instructions: HashMap<usize, Instruction>
 }
@@ -10,7 +10,7 @@ pub struct Program {
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::new();
-        for i in 0..self.length {
+        for i in 0..self.buffer.len() {
             if let Some(instruction) = self.instructions.get(&i) {
                 output.push_str(format!("{}{}\n", instruction,
                     if i == self.entry_point {

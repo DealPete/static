@@ -4,33 +4,52 @@ use std::collections::HashMap;
 
 pub fn decode_file(buffer: Vec<u8>, entry: usize) -> Program {
     let mut program = Program {
-        length: buffer.len(),
+        buffer: buffer,
         entry_point: entry,
         instructions: HashMap::new()
     };
 
-    let mut loose_ends = walk_buffer(&buffer, &mut program, entry);
+    let mut loose_ends = walk_buffer(&mut program, entry, true);
     
     while let Some(loose_end) = loose_ends.pop() {
-        if let Some(instruction) = program.instructions.get(&loose_end) {
-            match instruction.mnemonic {
-                Mnemonic::INT => if !dos::should_continue(&instruction, &program) {
-                    continue;
-                },
-                _ => ()
-            }
+        #[derive(Debug, PartialEq)]
+        enum Loose_end_type {
+            INT21, 
+            Indirect_jump
+        }
 
+        let mut loose_end_type;
+        let mut add_label = true;
+        let mut entry_index = loose_end;
+
+        if let Some(instruction) = program.instructions.get(&loose_end) {
+            loose_end_type = match instruction.mnemonic {
+                Mnemonic::INT => Loose_end_type::INT21,
+                _ => Loose_end_type::Indirect_jump
+            }
         } else {
             panic!("Loose end not found in program!");
         }
-        let mut new_loose_ends = walk_buffer(&buffer, &mut program, loose_end);
+
+        if loose_end_type == Loose_end_type::INT21 {
+            if dos::does_int21_always_end_program(loose_end, &program) {
+                continue;
+            }
+            add_label = false;
+            if let Some(instruction) = program.instructions.get_mut(&loose_end) {
+                entry_index += instruction.length as usize;
+                instruction.next = Some(entry_index);
+            }
+        }
+
+        let mut new_loose_ends = walk_buffer(&mut program, entry_index, add_label);
         loose_ends.append(&mut new_loose_ends);
     }
 
     return program;
 }
 
-pub fn walk_buffer(buffer: &Vec<u8>, program: &mut Program, entry: usize) -> Vec<usize> {
+pub fn walk_buffer(program: &mut Program, entry: usize, add_label: bool) -> Vec<usize> {
     let mut offset : usize;
     let mut loose_ends = Vec::new();
     let mut jump_destinations : Vec<usize> = Vec::new();
@@ -43,10 +62,10 @@ pub fn walk_buffer(buffer: &Vec<u8>, program: &mut Program, entry: usize) -> Vec
         }
         offset = dest;
 
-        let mut needs_label = true;
+        let mut needs_label = add_label;
 	    let mut cont = true;
         while cont {
-            let mut inst = match decode_instruction(&buffer, offset) {
+            let mut inst = match decode_instruction(&program.buffer, offset) {
                 Ok(instruction) => instruction,
                 Err(err) => {
                    println!("{}", program);
@@ -57,37 +76,39 @@ pub fn walk_buffer(buffer: &Vec<u8>, program: &mut Program, entry: usize) -> Vec
             inst.label = needs_label;
             needs_label = false;
             let next_offset = inst.length as usize + offset;
-            if next_offset >= buffer.len() {
+            inst.next = Some(next_offset);
+            if inst.mnemonic == Mnemonic::JMP ||
+                inst.mnemonic == Mnemonic::RET ||
+                next_offset >= program.buffer.len() {
+                inst.next = None;
                 cont = false;
             } else {
-                match program.instructions.get(&next_offset) {
-                    None => (),
-                    Some(_) => cont = false
+                if let Some(_) = program.instructions.get(&next_offset) {
+                    cont = false
                 }
-                if inst.mnemonic == Mnemonic::JMP ||
-                    inst.mnemonic == Mnemonic::RET {
-                    cont = false;
-                }
-                if inst.mnemonic.is_jump() {
-                    match inst.op1 {
-                        Some(Operand::Imm8(rel))
-                            => jump_destinations.push(add_rel8(next_offset, rel)),
-                        Some(Operand::Imm16(rel))
-                            => jump_destinations.push(add_rel16(next_offset, rel)),
-                        Some(Operand::PtrReg(reg))
-                            => loose_ends.push(inst.position),
-                        _ => panic!("unimplemented operand for jump!")
-                    }
+            }
+            if inst.mnemonic.is_jump() {
+                match inst.op1 {
+                    Some(Operand::Imm8(rel))
+                        => jump_destinations.push(add_rel8(next_offset, rel)),
+                    Some(Operand::Imm16(rel))
+                        => jump_destinations.push(add_rel16(next_offset, rel)),
+                    Some(Operand::PtrReg(reg))
+                        => loose_ends.push(inst.position),
+                    _ => panic!("unimplemented operand for jump!")
                 }
             }
             if inst.mnemonic == Mnemonic::INT {
-                loose_ends.push(inst.position);
-                cont = false;
+                if dos::does_int_end_program(&inst) {
+                    cont = false;
+                    inst.next = None;
+                }
+                if dos::is_int_loose_end(&inst) {
+                    loose_ends.push(inst.position);
+                    cont = false;
+                    inst.next = None;
+                }
             }
-            inst.next = match cont {
-                true => Some(next_offset),
-                false => None
-            };
             program.instructions.insert(offset, inst);
             offset = next_offset;
         }
@@ -411,18 +432,18 @@ fn decode_string_op(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, Stri
 
 fn decode_test_ax(buffer: &Vec<u8>, offset:usize) -> Result<Instruction, String> {
     let code = buffer[offset];
+    let size = code & 1;
     let mut inst = Instruction::new(Mnemonic::TEST);
-    inst.op2 = match code {
+    inst.op1 = match code {
         0xa8 => Some(Operand::Register8(Register::AL)),
         0xa9 => Some(Operand::Register16(Register::AX)),
         _ => panic!("wrong opcode")
     };
-    inst.op2 = Some(match code {
-        0xa8 => Operand::Imm8(buffer[offset + 1] as i8),
-        0xa9 => Operand::Imm16(get_word(buffer, offset + 1) as i16),
-        _ => panic!("wrong opcode")
+    inst.op2 = Some(match size {
+        0 => Operand::Imm8(buffer[offset + 1] as i8),
+        _ => Operand::Imm16(get_word(buffer, offset + 1) as i16),
     });
-    inst.length = 2 + code & 1;
+    inst.length = 2 + size;
     return Ok(inst);
 }
 
@@ -497,7 +518,7 @@ fn decode_shift_rotate(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, S
         0x38 => Mnemonic::SAR,
         _ => panic!("incorrect extension code!")
     });
-    let (op, _, length) = decode_mod_rm(buffer, offset, code & 1, 0);
+    let (op, _, length) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
     inst.op1 = op;
     inst.op2 = Some(if code & 2 == 0 {
         Operand::Imm8(0x1)

@@ -19,7 +19,9 @@ fn main() {
 			"Failed to read into buffer.");
 
         let entry_point = find_entry(&buffer);
-        println!("{}", dis::decode_file(buffer, entry_point));
+        let program = dis::decode_file(buffer, entry_point);
+        println!("{}", program);
+        //println!("{}", graph::generate_flow_graph(&program));
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }
@@ -32,7 +34,7 @@ fn main() {
 // 0x100 bytes to the beginning of the PSP.
 pub fn find_entry(buffer: &Vec<u8>) -> usize {
     if &buffer[0..2] == [0x4d, 0x5a] {
-        let load_module_segment_offset = 0x10;
+        let load_module_segment_offset = 0x10;  // length of PSP
         let header_size = 16*get_word(buffer, 0x08) as usize;
         let instruction_pointer = get_word(buffer, 0x14) as usize;
         let code_segment = get_word(buffer, 0x16).wrapping_add(load_module_segment_offset);

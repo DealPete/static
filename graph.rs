@@ -12,7 +12,7 @@ impl fmt::Display for FlowGraph {
         let mut output = String::new();
         for i in 0..self.nodes.len() {
             let ref node = self.nodes[i];
-            output.push_str(format!("Node {}\n=======\n", i).as_str());
+            output.push_str(format!("Node {}\n========\n", i).as_str());
             match node.insts.len() {
                 0 => panic!("There shouldn't be a node with 0 instructions."),
                 1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
@@ -101,16 +101,19 @@ impl Node {
 pub fn generate_flow_graph(program: &Program) -> FlowGraph {
     let mut graph = FlowGraph::new();
     
-    for i in 0..program.length {
-        if let Some(ref inst) = program.instructions.get(&i) {
+    for i in 0..program.buffer.len() {
+        if let Some(_) = program.instructions.get(&i) {
             if graph.get_node_index_at(i) == None {
                 let mut insts: Vec<usize> = Vec::new();
-                let mut cur_index = inst.position;
+                let mut cur_index = i;
                 loop {
                     let cur_inst = program.instructions.get(&cur_index);
                     match cur_inst {
-                        None => break,
+                        None => panic!("no instruction at {}.", cur_index),
                         Some(ref inst) => {
+                            if inst.label && cur_index != i {
+                                break;
+                            }
                             insts.push(cur_index);
                             if inst.mnemonic.is_jump() {
                                 break;
@@ -118,6 +121,9 @@ pub fn generate_flow_graph(program: &Program) -> FlowGraph {
                             match inst.next {
                                 None => break,
                                 Some(index) => cur_index = index
+                            }
+                            if graph.get_node_index_at(cur_index) != None {
+                                break;
                             }
                         }
                     }
@@ -130,7 +136,6 @@ pub fn generate_flow_graph(program: &Program) -> FlowGraph {
 
     let mut edges = Vec::new();
 
-    println!("{}", program);
     for i in 0..graph.nodes.len() {
         let node = graph.get_node(i);
         let last_inst = node.insts[node.insts.len()-1];

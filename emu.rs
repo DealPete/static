@@ -1,107 +1,113 @@
 use std::fmt;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use defs::*;
 use graph;
 
 pub struct State {
-    ax : Reg16,
-    bx : Reg16,
-    cx : Reg16,
-    dx : Reg16,
-    sp : Reg16,
-    bp : Reg16,
-    si : Reg16,
-    di : Reg16,
-    cs : Reg16,
-    ds : Reg16,
-    es : Reg16,
-    ss : Reg16,
-    ip : Reg16,
+    regs : Registers,
+    flags : Flags,
     memory : HashMap<usize, u8>
 }
 
 impl State {
     fn new() -> State {
         State {
-            ax : Reg16::Undefined,
-            bx : Reg16::Undefined,
-            cx : Reg16::Undefined,
-            dx : Reg16::Undefined,
-            sp : Reg16::Undefined,
-            bp : Reg16::Undefined,
-            si : Reg16::Undefined,
-            di : Reg16::Undefined,
-            cs : Reg16::Undefined,
-            ds : Reg16::Undefined,
-            es : Reg16::Undefined,
-            ss : Reg16::Undefined,
-            ip : Reg16::Undefined,
+            regs : Registers::new(),
+            flags : Flags::new(),
             memory : HashMap::new()
         }
     }
-
     
-    pub fn get_reg8(&self, reg: Register) -> Reg8 {
-        struct Split {
-            low: Reg8,
-            high: Reg8
+    pub fn get_reg8(&self, reg: Register) -> Byte {
+        let split_low = |reg: &Word| {
+            match *reg {
+                Word::Undefined => Byte::Undefined,
+                Word::AnyValue => Byte::AnyValue,
+                Word::Int(ref words) =>
+                    Byte::Int({
+                        let mut set = HashSet::new();
+                        for word in words {
+                            set.insert(*word as u8);
+                        }
+                        set
+                    }),
+                Word::Bytes(ref byte_high, ref byte_low) => byte_low.clone()
+            }
         };
-        let split = |reg: Reg16| {
-            match reg {
-                Reg16::Undefined => Split { low: Reg8::Undefined, high: Reg8::Undefined },
-                Reg16::AnyValue => Split { low: Reg8::AnyValue, high: Reg8::AnyValue },
-                Reg16::Word(word) => Split {
-                    low: Reg8::Byte(word as u8),
-                    high: Reg8::Byte((word >> 8) as u8)
-                },
-                Reg16::Regs(reg_high, reg_low) => Split { low: reg_low, high: reg_high }
+        let split_high = |reg: &Word| {
+            match *reg {
+                Word::Undefined => Byte::Undefined,
+                Word::AnyValue => Byte::AnyValue,
+                Word::Int(ref words) =>
+                    Byte::Int({
+                        let mut set = HashSet::new();
+                        for word in words {
+                            set.insert((*word >> 8) as u8);
+                        }
+                        set
+                    }),
+                Word::Bytes(ref byte_high, ref byte_low) => byte_high.clone()
             }
         };
         match reg {
-            Register::AL => split(self.ax).low,
-            Register::AH => split(self.ax).high,
-            Register::BL => split(self.bx).low,
-            Register::BH => split(self.bx).high,
-            Register::CL => split(self.cx).low,
-            Register::CH => split(self.cx).high,
-            Register::DL => split(self.dx).low,
-            Register::DH => split(self.dx).high,
+            Register::AL => split_low(&self.regs.ax),
+            Register::AH => split_high(&self.regs.ax),
+            Register::BL => split_low(&self.regs.bx),
+            Register::BH => split_high(&self.regs.bx),
+            Register::CL => split_low(&self.regs.cx),
+            Register::CH => split_high(&self.regs.cx),
+            Register::DL => split_low(&self.regs.dx),
+            Register::DH => split_high(&self.regs.dx),
             _ => panic!("register {:?} is not a byte register.", reg)
         }
     }
 
-    pub fn get_reg16(&self, reg: Register) -> Reg16 {
+    pub fn get_reg16(&self, reg: Register) -> Word {
         match reg {
-            Register::AX => self.ax,
-            Register::BX => self.bx,
-            Register::CX => self.cx,
-            Register::DX => self.dx,
-            Register::CS => self.cs,
+            Register::AX => self.regs.ax.clone(),
+            Register::BX => self.regs.bx.clone(),
+            Register::CX => self.regs.cx.clone(),
+            Register::DX => self.regs.dx.clone(),
+            Register::CS => self.regs.cs.clone(),
             _ => panic!("register {:?} not implemented yet in emulator.", reg)
         }
     }
 
-    pub fn set_byte(&mut self, reg: Register, value: Reg8) {
+    pub fn init_byte(&mut self, reg: Register, int: u8) {
+        let mut byte_set = HashSet::new();
+        byte_set.insert(int);
+        self.set_byte(reg, Byte::Int(byte_set));
+    }
+
+    pub fn set_byte(&mut self, reg: Register, value: Byte) {
         match reg {
-            Register::AL => self.ax = Reg16::Regs(self.get_reg8(Register::AH), value),
-            Register::AH => self.ax = Reg16::Regs(value, self.get_reg8(Register::AL)),
-            Register::BL => self.ax = Reg16::Regs(self.get_reg8(Register::BH), value),
-            Register::BH => self.ax = Reg16::Regs(value, self.get_reg8(Register::BL)),
-            Register::CL => self.ax = Reg16::Regs(self.get_reg8(Register::CH), value),
-            Register::CH => self.ax = Reg16::Regs(value, self.get_reg8(Register::CL)),
-            Register::DL => self.ax = Reg16::Regs(self.get_reg8(Register::DH), value),
-            Register::DH => self.ax = Reg16::Regs(value, self.get_reg8(Register::DL)),
+            Register::AL => self.regs.ax = Word::Bytes(self.get_reg8(Register::AH), value),
+            Register::AH => self.regs.ax = Word::Bytes(value, self.get_reg8(Register::AL)),
+            Register::BL => self.regs.bx = Word::Bytes(self.get_reg8(Register::BH), value),
+            Register::BH => self.regs.bx = Word::Bytes(value, self.get_reg8(Register::BL)),
+            Register::CL => self.regs.cx = Word::Bytes(self.get_reg8(Register::CH), value),
+            Register::CH => self.regs.cx = Word::Bytes(value, self.get_reg8(Register::CL)),
+            Register::DL => self.regs.dx = Word::Bytes(self.get_reg8(Register::DH), value),
+            Register::DH => self.regs.dx = Word::Bytes(value, self.get_reg8(Register::DL)),
             _ => panic!("can't set byte in register {:?}.", reg)
         }
     }
 
-    pub fn set_word(&mut self, reg: Register, value: Reg16) {
+    pub fn init_word(&mut self, reg: Register, int: u16) {
+        let mut word_set = HashSet::new();
+        word_set.insert(int);
+        self.set_word(reg, Word::Int(word_set));
+    }
+
+    pub fn set_word(&mut self, reg: Register, value: Word) {
         match reg {
-            Register::AX => self.ax = value,
-            Register::BX => self.bx = value,
-            Register::CX => self.cx = value,
-            Register::DX => self.dx = value,
-            Register::CS => self.cs = value,
+            Register::AX => self.regs.ax = value,
+            Register::BX => self.regs.bx = value,
+            Register::CX => self.regs.cx = value,
+            Register::DX => self.regs.dx = value,
+            Register::CS => self.regs.cs = value,
+            Register::SP => self.regs.sp = value,
             _ => panic!("can't set word in register {:?}.", reg)
         }
     }
@@ -109,66 +115,137 @@ impl State {
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let regs = &self.regs;
         let line1 = format!("AX={}  BX={}  CX={}  DX={}  SP={}  BP={}  SI={}  DI={}",
-        self.ax, self.bx, self.cx, self.dx, self.sp, self.bp, self.si, self.di);
+        regs.ax, regs.bx, regs.cx, regs.dx, regs.sp, regs.bp, regs.si, regs.di);
         let line2 = format!("DS={}  ES={}  SS={}  CS={}  IP={}",
-            self.ds, self.es, self.ss, self.cs, self.ip);
+            regs.ds, regs.es, regs.ss, regs.cs, regs.ip);
         return write!(f, "{}\n{}", line1, line2);
     }
 }
 
-#[derive(Copy, Clone)]
-enum Reg16 {
-    Undefined,
-    AnyValue,
-    Word(u16),
-    Regs(Reg8, Reg8)
+struct Registers {
+    ax : Word,
+    bx : Word,
+    cx : Word,
+    dx : Word,
+    sp : Word,
+    bp : Word,
+    si : Word,
+    di : Word,
+    cs : Word,
+    ds : Word,
+    es : Word,
+    ss : Word,
+    ip : Word
 }
 
-impl fmt::Display for Reg16 {
+impl Registers {
+    fn new() -> Registers {
+        return Registers {
+            ax : Word::Undefined,
+            bx : Word::Undefined,
+            cx : Word::Undefined,
+            dx : Word::Undefined,
+            sp : Word::Undefined,
+            bp : Word::Undefined,
+            si : Word::Undefined,
+            di : Word::Undefined,
+            cs : Word::Undefined,
+            ds : Word::Undefined,
+            es : Word::Undefined,
+            ss : Word::Undefined,
+            ip : Word::Undefined
+        }
+    }
+}
+
+#[derive(Clone)]
+enum Word {
+    Undefined,
+    AnyValue,
+    Int(HashSet<u16>),
+    Bytes(Byte, Byte),
+}
+
+impl fmt::Display for Word {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match *self {
-            Reg16::Undefined => String::from("????"),
-            Reg16::AnyValue => String::from("****"),
-            Reg16::Word(word) => format!("{:04x}", word),
-            Reg16::Regs(reg1, reg2) => format!("{}{}", reg1, reg2)
+            Word::Undefined => String::from("????"),
+            Word::AnyValue => String::from("****"),
+            Word::Int(ref word) => String::from("<-->"),
+            Word::Bytes(ref reg1, ref reg2) => format!("{}{}", reg1, reg2)
         })
+    }
+}
+
+#[derive(Clone)]
+enum Byte {
+    Undefined,
+    AnyValue,
+    Int(HashSet<u8>),
+}
+
+impl fmt::Display for Byte {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", match *self {
+            Byte::Undefined => String::from("??"),
+            Byte::AnyValue => String::from("**"),
+            Byte::Int(ref byte) => String::from("<>")
+        })
+    }
+}
+
+struct Flags {
+    carry_flag : Flag,
+    parity_flag : Flag,
+    adjust_flag : Flag,
+    zero_flag : Flag,
+    sign_flag : Flag,
+    int_flag : Flag,
+    dir_flag : Flag,
+    overflow_flag : Flag
+}
+
+impl Flags {
+    fn new() -> Flags {
+        Flags {
+            carry_flag: Flag::Undefined,
+            parity_flag: Flag::Undefined,
+            adjust_flag: Flag::Undefined,
+            zero_flag: Flag::Undefined,
+            sign_flag: Flag::Undefined,
+            int_flag: Flag::Undefined,
+            dir_flag: Flag::Undefined,
+            overflow_flag: Flag::Undefined,
+        }
     }
 }
 
 #[derive(Copy, Clone)]
-enum Reg8 {
+enum Flag {
     Undefined,
-    AnyValue,
-    Byte(u8)
-}
-
-impl fmt::Display for Reg8 {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match self {
-            &Reg8::Undefined => String::from("??"),
-            &Reg8::AnyValue => String::from("**"),
-            &Reg8::Byte(byte) => format!("{:02x}", byte)
-        })
-    }
+    True,
+    False,
+    TrueAndFalse
 }
 
 // We assume the PSP is loaded at 0x75a and the program at 0x76a.
 // This is what DOSBOX uses as a default.
 pub fn get_initial_state(buffer: &Vec<u8>) -> State {
     let mut state = State::new();
-    state.set_word(Register::DS, Reg16::Word(0x75a));
-    state.set_word(Register::ES, Reg16::Word(0x75a));
+    state.init_word(Register::DS, 0x75a);
+    state.init_word(Register::ES, 0x75a);
     if &buffer[0..2] == [0x4d, 0x5a] {
-        state.set_word(Register::SS, Reg16::Word(get_word(buffer, 0xe).wrapping_add(0x76a)));
-        state.set_word(Register::SP, Reg16::Word(get_word(buffer, 0x10)));
-        state.set_word(Register::IP, Reg16::Word(get_word(buffer, 0x14)));
-        state.set_word(Register::CS, Reg16::Word(get_word(buffer, 0x16).wrapping_add(0x76a)));
+        state.init_word(Register::SS, get_word(buffer, 0xe).wrapping_add(0x76a));
+        state.init_word(Register::SP, get_word(buffer, 0x10));
+        state.init_word(Register::IP, get_word(buffer, 0x14));
+        state.init_word(Register::CS, get_word(buffer, 0x16).wrapping_add(0x76a));
     } else {
-        state.set_word(Register::SS, Reg16::Word(0x75a));
-        state.set_word(Register::SP, Reg16::Word(0xfffe));
-        state.set_word(Register::IP, Reg16::Word(0x100));
-        state.set_word(Register::CS, Reg16::Word(0x75a));
+        state.init_word(Register::SS, 0x75a);
+        state.init_word(Register::SP, 0xfffe);
+        state.init_word(Register::IP, 0x100);
+        state.init_word(Register::CS, 0x75a);
     }
 
     return state;
@@ -177,7 +254,8 @@ pub fn get_initial_state(buffer: &Vec<u8>) -> State {
 fn emulate(state: &mut State, inst: &Instruction) {
     match inst.mnemonic {
         Mnemonic::MOV => emulate_mov(state, inst),
-        _ => panic!("unimplemented instruction")
+        Mnemonic::INT | Mnemonic::PUSH => (),
+        _ => panic!("unimplemented instruction at {:x}", inst.position)
     }
 }
 
@@ -190,7 +268,7 @@ fn emulate_mov(state: &mut State, inst: &Instruction) {
                     state.set_byte(target_reg, reg);
                 },
                 Some(Operand::Imm8(imm)) =>
-                    state.set_byte(target_reg, Reg8::Byte(imm as u8)),
+                    state.init_byte(target_reg, imm as u8),
                 _ => panic!("Invalid operand!")
             }
         },
@@ -201,7 +279,7 @@ fn emulate_mov(state: &mut State, inst: &Instruction) {
                     state.set_word(target_reg, reg);
                 },
                 Some(Operand::Imm16(imm)) =>
-                    state.set_word(target_reg, Reg16::Word(imm as u16)),
+                    state.init_word(target_reg, imm as u16),
                 _ => panic!("Invalid operand!")
             }
         },
@@ -209,11 +287,9 @@ fn emulate_mov(state: &mut State, inst: &Instruction) {
     }
 }
 
-pub fn find_ah(instruction: &Instruction, program: &Program) -> Option<u8> {
+fn find_reg_at(reg: Register, inst_index: usize, program: &Program) -> Byte {
     let graph = graph::generate_flow_graph(program);
-    println!("{}", graph);
-    println!("{}", instruction.position);
-    let node = match graph.get_node_at(instruction.position) {
+    let node = match graph.get_node_at(inst_index) {
         None => panic!("Asked to search from instruction not in graph!"),
         Some(node) => node
     };
@@ -221,17 +297,23 @@ pub fn find_ah(instruction: &Instruction, program: &Program) -> Option<u8> {
     let mut offset = node.insts[0];
 
     let mut i = 0;
-    while node.insts[i] != offset {
+    while offset != inst_index {
         match program.instructions.get(&offset) {
             None => panic!("There should be an instruction at {:x}!", offset),
             Some(inst) => emulate(&mut state, &inst)
         }
         i += 1;
+        offset = node.insts[i];
+        println!("{}", state);
     }
 
-    return match state.get_reg8(Register::AH) {
-        Reg8::Undefined => None,
-        Reg8::AnyValue => None,
-        Reg8::Byte(byte) => Some(byte)
-    };
+    return state.get_reg8(Register::AH);
+}
+
+pub fn reg_at_is_always_in(reg: Register, inst_index: usize, values: HashSet<u8>, program: &Program) -> bool {
+    match find_reg_at(reg, inst_index, program) {
+        Byte::Undefined => panic!("Couldn't determine value of {:?} at 0x{:x}.", reg, inst_index),
+        Byte::AnyValue => false,
+        Byte::Int(ref reg_values) => reg_values.is_subset(&values)
+    }
 }
