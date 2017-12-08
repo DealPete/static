@@ -3,6 +3,7 @@ mod dis;
 mod dos;
 mod emu;
 mod graph;
+mod analyse;
 
 use defs::*;
 

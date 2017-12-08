@@ -1,9 +1,9 @@
 use std::fmt;
 use std::collections::HashMap;
-use defs::*;
 
 pub struct FlowGraph {
     nodes: Vec<Node>,
+    edges: Vec<Edge>,
     inst_map: HashMap<usize, usize>
 }
 
@@ -14,22 +14,22 @@ impl fmt::Display for FlowGraph {
             let ref node = self.nodes[i];
             output.push_str(format!("Node {}\n========\n", i).as_str());
             match node.insts.len() {
-                0 => panic!("There shouldn't be a node with 0 instructions."),
+                0 => (),//panic!("There shouldn't be a node with 0 instructions."),
                 1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
                 _ => output.push_str(format!("Instructions 0x{:x} through 0x{:x}\n",
                     node.insts[0], node.insts[node.insts.len()-1]).as_str())
             }
-            if node.inbound_nodes.len() > 0 {
+            if node.inbound_edges.len() > 0 {
                 let mut inbound = String::new();
-                for edge in node.inbound_nodes.iter() {
-                    inbound.push_str(format!("{} ", edge).as_str());
+                for edge in node.inbound_edges.iter() {
+                    inbound.push_str(format!("{} ", self.edges[*edge].get_from()).as_str());
                 }
                 output.push_str(format!("Inbound nodes: {}\n", inbound).as_str());
             }
-            if node.outbound_nodes.len() > 0 {
+            if node.outbound_edges.len() > 0 {
                 let mut outbound = String::new();
-                for edge in node.outbound_nodes.iter() {
-                    outbound.push_str(format!("{} ", edge).as_str());
+                for edge in node.outbound_edges.iter() {
+                    outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
                 }
                 output.push_str(format!("Outbound nodes: {}\n", outbound).as_str());
             }
@@ -40,134 +40,133 @@ impl fmt::Display for FlowGraph {
 }
 
 impl FlowGraph {
-    fn new() -> FlowGraph {
+    pub fn new() -> FlowGraph {
         FlowGraph {
             nodes: Vec::new(),
+            edges: Vec::new(),
             inst_map: HashMap::new()
         }
     }
 
-    pub fn add_node(&mut self, insts: Vec<usize>) {
-        for inst in insts.iter() {
-            self.inst_map.insert(*inst, self.nodes.len());
-        }
-        self.nodes.push(Node {
-            insts: insts,
-            inbound_nodes: Vec::new(),
-            outbound_nodes: Vec::new()
-        });
+    pub fn add_node_at(&mut self, offset: usize, label: bool) -> usize {
+        let mut node = Node::new(label);
+        node.insts.push(offset);
+        self.nodes.push(node);
+        self.inst_map.insert(offset, self.nodes.len() - 1);
+        return self.nodes.len() - 1;
     }
 
-    pub fn get_node(&self, i: usize) -> &Node {
-        &self.nodes[i]
-    }
-
-    fn get_node_index_at(&self, offset: usize) -> Option<usize> {
+    pub fn get_node_index_at(&self, offset: usize) -> Option<usize> {
         match self.inst_map.get(&offset) {
             None => None,
-            Some(node) => Some(*node)
+            Some(index) => Some(*index)
         }
     }
 
     pub fn get_node_at(&self, offset: usize) -> Option<&Node> {
         match self.inst_map.get(&offset) {
             None => None,
-            Some(node_index) => Some(&self.nodes[*node_index])
+            Some(index) => Some(&self.nodes[*index])
         }
     }
 
     pub fn add_edge(&mut self, source: usize, target: usize) {
-        self.nodes[source].outbound_nodes.push(target);
-        self.nodes[target].inbound_nodes.push(source);
+        self.nodes[source].outbound_edges.push(self.edges.len());
+        self.nodes[target].inbound_edges.push(self.edges.len());
+        self.edges.push(Edge::new(source, target));
+    }
+    
+    pub fn insert_inst(&mut self, node_index: usize, inst_offset: usize) {
+        self.inst_map.insert(inst_offset, node_index);
+        self.nodes[node_index].insts.push(inst_offset);
+    }
+
+    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize) {
+        let mut new_node = Node::new(true);
+        let new_node_index = self.nodes.len();
+        match self.nodes[node_index].insts.iter().position(|&r| r == inst_offset) {
+            None => panic!("can't find offset to split at in node {}, instruction 0x{:x}.", node_index, inst_offset),
+            Some(index) => {
+                if index == 0 {
+                    return
+                }
+                new_node.insts = self.nodes[node_index].insts.split_off(index);
+                self.nodes.push(new_node);
+                self.nodes.swap(node_index, new_node_index);
+
+                for edge in self.nodes[new_node_index].inbound_edges.iter() {
+                    self.edges[*edge].set_to(new_node_index);
+                }
+
+                self.nodes[node_index].outbound_edges = self.nodes[new_node_index].outbound_edges.clone();
+                self.nodes[new_node_index].outbound_edges.clear();
+                self.add_edge(new_node_index, node_index);
+
+                for inst in self.nodes[new_node_index].insts.iter() {
+                    self.inst_map.insert(*inst, new_node_index);
+                }
+            }
+        }
+    }
+
+    pub fn extend_node(&mut self, inst: usize, inst_length: u8) -> bool {
+        let next_inst = inst + inst_length as usize;
+        match self.get_node_index_at(inst) {
+            None => panic!("trying to extend non-existant node!"),
+            Some(node_index) => match self.get_node_index_at(next_inst) {
+                None => {
+                    self.insert_inst(node_index, next_inst);
+                    return true;
+                },
+                Some(next_node_index) => {
+                    self.add_edge(node_index, next_node_index);
+                    return false;
+                }
+            }
+        }
     }
 }
 
 pub struct Node {
+    pub label: bool,
     pub insts: Vec<usize>,
-    pub inbound_nodes: Vec<usize>,
-    pub outbound_nodes: Vec<usize>
+    pub inbound_edges: Vec<usize>,
+    pub outbound_edges: Vec<usize>
 }
 
 impl Node {
-    fn new() -> Node {
+    fn new(label: bool) -> Node {
         Node {
+            label: label,
             insts: Vec::new(),
-            inbound_nodes: Vec::new(),
-            outbound_nodes: Vec::new()
+            inbound_edges: Vec::new(),
+            outbound_edges: Vec::new()
         }
     }
 }
 
-pub fn generate_flow_graph(program: &Program) -> FlowGraph {
-    let mut graph = FlowGraph::new();
-    
-    for i in 0..program.buffer.len() {
-        if let Some(_) = program.instructions.get(&i) {
-            if graph.get_node_index_at(i) == None {
-                let mut insts: Vec<usize> = Vec::new();
-                let mut cur_index = i;
-                loop {
-                    let cur_inst = program.instructions.get(&cur_index);
-                    match cur_inst {
-                        None => panic!("no instruction at {}.", cur_index),
-                        Some(ref inst) => {
-                            if inst.label && cur_index != i {
-                                break;
-                            }
-                            insts.push(cur_index);
-                            if inst.mnemonic.is_jump() {
-                                break;
-                            }
-                            match inst.next {
-                                None => break,
-                                Some(index) => cur_index = index
-                            }
-                            if graph.get_node_index_at(cur_index) != None {
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                graph.add_node(insts);
-            }
+struct Edge {
+    from: usize,
+    to: usize
+}
+
+impl Edge {
+    fn new(from_node_index: usize, to_node_index: usize) -> Edge {
+        Edge {
+            from: from_node_index,
+            to: to_node_index
         }
     }
 
-    let mut edges = Vec::new();
-
-    for i in 0..graph.nodes.len() {
-        let node = graph.get_node(i);
-        let last_inst = node.insts[node.insts.len()-1];
-        if let Some(ref inst) = program.instructions.get(&last_inst) {
-            if inst.mnemonic.is_jump() {
-                let target = match inst.op1 {
-                    Some(Operand::Imm8(rel))
-                        => add_rel8(inst.position + inst.length as usize, rel),
-                    Some(Operand::Imm16(rel))
-                        => add_rel16(inst.position + inst.length as usize, rel),
-                    Some(Operand::PtrReg(reg))
-                        => break,
-                    _ => panic!("unimplemented operand for jump!")
-                };
-
-                if let Some(target_node) = graph.get_node_index_at(target) {
-                    edges.push((i, target_node));
-                }
-            }
-            if let Some(index) = inst.next {
-                if let Some(target_node) = graph.get_node_index_at(index) {
-                    edges.push((i, target_node));
-                }
-            }
-        } else {
-            panic!("Instruct in node not found in program!");
-        }
-    }
-    
-    for (source, target) in edges {
-        graph.add_edge(source, target);
+    fn get_from(&self) -> usize {
+        self.from
     }
 
-    return graph;
+    fn get_to(&self) -> usize {
+        self.to
+    }
+
+    fn set_to(&mut self, to: usize) {
+        self.to = to;
+    }
 }

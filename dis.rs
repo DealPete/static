@@ -1,120 +1,158 @@
+use graph;
 use dos;
 use defs::*;
+use analyse;
 use std::collections::HashMap;
 
-pub fn decode_file(buffer: Vec<u8>, entry: usize) -> Program {
+pub fn disassemble_load_module(buffer: Vec<u8>, entry: usize) -> Program {
     let mut program = Program {
         buffer: buffer,
         entry_point: entry,
-        instructions: HashMap::new()
+        instructions: HashMap::new(),
+        flow_graph: graph::FlowGraph::new()
     };
 
-    let mut loose_ends = walk_buffer(&mut program, entry, true);
+    program.flow_graph.add_node_at(entry, true);
+    let mut loose_ends = walk_buffer(&mut program, entry);
     
-    while let Some(loose_end) = loose_ends.pop() {
-        #[derive(Debug, PartialEq)]
-        enum Loose_end_type {
-            INT21, 
-            Indirect_jump
-        }
-
-        let mut loose_end_type;
-        let mut add_label = true;
-        let mut entry_index = loose_end;
-
+    while let Some(mut loose_end) = loose_ends.pop() {
         if let Some(instruction) = program.instructions.get(&loose_end) {
-            loose_end_type = match instruction.mnemonic {
-                Mnemonic::INT => Loose_end_type::INT21,
-                _ => Loose_end_type::Indirect_jump
+            match instruction.mnemonic {
+                Mnemonic::INT => {
+                    if dos::does_int21_always_end_program(loose_end, &program) {
+                        continue;
+                    } else {
+                        program.flow_graph.extend_node(loose_end, instruction.length);
+                        loose_end += instruction.length as usize;
+                    }
+                },
+                Mnemonic::JMP => {
+                    match program.flow_graph.get_node_index_at(loose_end) {
+                        Some(source_node) => {
+                            let destinations = analyse::find_indirect_branch_dests(
+                                loose_end, &program); 
+                            for dest in destinations {
+                                add_jump_to_flow_graph(&mut program.flow_graph, source_node, dest);
+                                loose_ends.push(dest);
+                            }
+                        },
+                        None => panic!("source of indirect jump not in flow graph!")
+                    }
+                    continue;
+                },
+                _ => panic!("unimplemented loose end mnemonic.")
             }
-        } else {
-            panic!("Loose end not found in program!");
         }
 
-        if loose_end_type == Loose_end_type::INT21 {
-            if dos::does_int21_always_end_program(loose_end, &program) {
-                continue;
-            }
-            add_label = false;
-            if let Some(instruction) = program.instructions.get_mut(&loose_end) {
-                entry_index += instruction.length as usize;
-                instruction.next = Some(entry_index);
-            }
-        }
-
-        let mut new_loose_ends = walk_buffer(&mut program, entry_index, add_label);
+        let mut new_loose_ends = walk_buffer(&mut program, loose_end);
         loose_ends.append(&mut new_loose_ends);
     }
 
     return program;
 }
 
-pub fn walk_buffer(program: &mut Program, entry: usize, add_label: bool) -> Vec<usize> {
-    let mut offset : usize;
+pub fn walk_buffer(program: &mut Program, entry: usize) -> Vec<usize> {
+    let mut offset;
     let mut loose_ends = Vec::new();
     let mut jump_destinations : Vec<usize> = Vec::new();
     jump_destinations.push(entry);
 
     while let Some(dest) = jump_destinations.pop() {
-        if let Some(instruction) = program.instructions.get_mut(&dest) {
-            instruction.label = true;
-            continue;
-        }
-        offset = dest;
+        match program.flow_graph.get_node_index_at(dest) {
+            None => panic!("No node created for instruction at {:x}.", dest),
+            Some(node) => {
+                offset = dest;
+                let mut cont = true;
+                while cont {
+                    let inst = match decode_instruction(&program.buffer, offset) {
+                        Ok(instruction) => instruction,
+                        Err(err) => {
+                           println!("{}", program);
+                           panic!(err);
+                        }
+                    };
+                    let next_offset = inst.length as usize + offset;
+                    if inst.mnemonic == Mnemonic::INT {
+                        if dos::does_int_end_program(&inst) {
+                            cont = false;
+                        }
+                        if dos::is_int_loose_end(&inst) {
+                            loose_ends.push(offset);
+                            cont = false;
+                        }
+                    }
+                    if inst.mnemonic.is_branch()
+                        || inst.mnemonic == Mnemonic::RET
+                        || next_offset >= program.buffer.len() {
+                        cont = false;
+                    }
+                    if inst.mnemonic.is_branch() {
+                        if inst.is_rel_branch() {
+                            jump_destinations.append(&mut handle_branch(program, node, offset, &inst));
+                        } else {
+                            loose_ends.push(offset);
+                        }
+                    } else {
+                        if let Some(target_node) = program.flow_graph.get_node_index_at(next_offset) {
+                            program.flow_graph.add_edge(node, target_node);
+                            cont = false;
+                        }
+                    }
 
-        let mut needs_label = add_label;
-	    let mut cont = true;
-        while cont {
-            let mut inst = match decode_instruction(&program.buffer, offset) {
-                Ok(instruction) => instruction,
-                Err(err) => {
-                   println!("{}", program);
-                   panic!(err);
-                }
-            };
-            inst.position = offset;
-            inst.label = needs_label;
-            needs_label = false;
-            let next_offset = inst.length as usize + offset;
-            inst.next = Some(next_offset);
-            if inst.mnemonic == Mnemonic::JMP ||
-                inst.mnemonic == Mnemonic::RET ||
-                next_offset >= program.buffer.len() {
-                inst.next = None;
-                cont = false;
-            } else {
-                if let Some(_) = program.instructions.get(&next_offset) {
-                    cont = false
+                    if offset != dest {
+                        program.flow_graph.insert_inst(node, offset);
+                    }
+                    program.instructions.insert(offset, inst);
+                    offset = next_offset;
                 }
             }
-            if inst.mnemonic.is_jump() {
-                match inst.op1 {
-                    Some(Operand::Imm8(rel))
-                        => jump_destinations.push(add_rel8(next_offset, rel)),
-                    Some(Operand::Imm16(rel))
-                        => jump_destinations.push(add_rel16(next_offset, rel)),
-                    Some(Operand::PtrReg(reg))
-                        => loose_ends.push(inst.position),
-                    _ => panic!("unimplemented operand for jump!")
-                }
-            }
-            if inst.mnemonic == Mnemonic::INT {
-                if dos::does_int_end_program(&inst) {
-                    cont = false;
-                    inst.next = None;
-                }
-                if dos::is_int_loose_end(&inst) {
-                    loose_ends.push(inst.position);
-                    cont = false;
-                    inst.next = None;
-                }
-            }
-            program.instructions.insert(offset, inst);
-            offset = next_offset;
         }
     }
 
     return loose_ends;
+}
+
+fn handle_branch(program: &mut Program, node: usize, offset: usize, inst: &Instruction) -> Vec<usize> {
+    let mut jump_destinations = Vec::new();
+    let next_offset = offset + inst.length as usize;
+
+    let target = match inst.op1 {
+        Some(Operand::Imm8(rel)) => add_rel8(next_offset, rel),
+        Some(Operand::Imm16(rel)) => add_rel16(next_offset, rel),
+        _ => panic!("unimplemented operand for relative jump!")
+    };
+
+    if let Some(dest) = add_jump_to_flow_graph(&mut program.flow_graph, node, target) {
+        jump_destinations.push(dest);
+    }
+
+    if inst.mnemonic != Mnemonic::JMP && next_offset < program.buffer.len() {
+        match program.flow_graph.get_node_index_at(next_offset) {
+            Some(next_node) => program.flow_graph.add_edge(node, next_node),
+            None => {
+                let new_node = program.flow_graph.add_node_at(next_offset, false);
+                program.flow_graph.add_edge(node, new_node);
+                jump_destinations.push(next_offset);
+            }
+        }
+    }
+
+    return jump_destinations;
+}
+
+fn add_jump_to_flow_graph(flow_graph: &mut graph::FlowGraph, source_node: usize, target_offset: usize) -> Option<usize> {
+    match flow_graph.get_node_index_at(target_offset) {
+        None => {
+            let target_node = flow_graph.add_node_at(target_offset, true);
+            flow_graph.add_edge(source_node, target_node);
+            Some(target_offset)
+        }
+        Some(next_node) => {
+            flow_graph.split_node_at(next_node, target_offset);
+            flow_graph.add_edge(source_node, next_node);
+            None
+        }
+    }
 }
 
 fn decode_instruction(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
@@ -262,7 +300,6 @@ fn decode_bcd_inst(code: u8) -> Result<Instruction, String> {
     inst.length = 1;
     return Ok(inst);
 }
-
         
 fn decode_inc_dec_push_pop_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
     let mut inst = Instruction::new(match buffer[offset] {

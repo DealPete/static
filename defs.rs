@@ -1,9 +1,12 @@
+use graph;
 use std::fmt;
 use std::collections::HashMap;
 
 pub struct Program {
     pub buffer: Vec<u8>,
     pub entry_point: usize,
+    pub load_module_segment: u16,
+    pub flow_graph: graph::FlowGraph,
     pub instructions: HashMap<usize, Instruction>
 }
 
@@ -12,7 +15,29 @@ impl fmt::Display for Program {
         let mut output = String::new();
         for i in 0..self.buffer.len() {
             if let Some(instruction) = self.instructions.get(&i) {
-                output.push_str(format!("{}{}\n", instruction,
+                let prefix = {
+                    let node = match self.flow_graph.get_node_at(i) {
+                        None => panic!("instruction 0x{:x} has no node!", i),
+                        Some(node) => node
+                    };
+                    if node.insts[0] == i && node.label {
+                        format!("{:4x}:   ", i)
+                    } else {
+                        format!("        ")
+                    }
+                };
+                let inst_output = if instruction.is_rel_branch() {
+                    let mut target = i + instruction.length as usize;
+                    match instruction.op1 {
+                        Some(Operand::Imm8(rel)) => target = add_rel8(target, rel),
+                        Some(Operand::Imm16(rel)) => target = add_rel16(target, rel),
+                        _ => panic!("Wrong operand for relative jump.")
+                    }
+                    format!("{:?} <{:x}>", instruction.mnemonic, target)
+                } else {
+                    format!("{}", instruction)
+                };
+                output.push_str(format!("{}{}{}\n", prefix.as_str(), inst_output,
                     if i == self.entry_point {
                         "\t; program entry point"
                     } else {
@@ -20,12 +45,11 @@ impl fmt::Display for Program {
                     }).as_str());
             }
         }
-        return write!(f, "{}", output);
+        write!(f, "{}", output)
     }
 }
 
 pub struct Instruction {
-    pub position: usize,
     pub next: Option<usize>,
     pub label: bool,
     pub seg_prefix: Option<Register>,
@@ -39,7 +63,6 @@ pub struct Instruction {
 impl Instruction {
     pub fn new(mnemonic: Mnemonic) -> Instruction {
         Instruction {
-            position: 0,
             next: None,
             seg_prefix: None,
             rep_prefix: None,
@@ -51,44 +74,39 @@ impl Instruction {
         }
     }
 
-    pub fn is_rel_jump(&self) -> bool {
-        self.mnemonic.is_jump() && match self.op1 {
+    pub fn is_rel_branch(&self) -> bool {
+        self.mnemonic.is_branch() && match self.op1 {
             Some(Operand::Imm8(_)) | Some(Operand::Imm16(_)) => true,
             _ => false
         }
+    }
+    
+    pub fn unpack_op1(&self) -> Operand {
+        self.op1.expect(
+            format!("Instruction doesn't have a first operand: {}", self).as_str())
+    }
+
+    pub fn unpack_op2(&self) -> Operand {
+        self.op1.expect(
+            format!("Instruction doesn't have a second operand: {}", self).as_str())
     }
 }
 
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut prefix = String::new();
-        if self.label {
-            prefix.push_str(format!("{:4x}:   ", self.position).as_str())
-        } else {
-            prefix.push_str("        ")
-        }
         if let Some(ref rep_prefix) = self.rep_prefix {
             prefix.push_str(format!("{:?} ", rep_prefix).as_str());
         }
-        if self.is_rel_jump() {
-            let mut target = self.position + self.length as usize;
-            match self.op1 {
-                Some(Operand::Imm8(rel)) => target = add_rel8(target, rel),
-                Some(Operand::Imm16(rel)) => target = add_rel16(target, rel),
-                _ => panic!("Wrong operand for relative jump.")
-            }
-            write!(f, "{}{:?} <{:x}>", prefix, self.mnemonic, target)
-        } else {
-            match self.op1 {
-                None => write!(f, "{}{:?}", prefix, self.mnemonic),
-                Some(op1) => match self.op2 {
-                    None => write!(f, "{}{:?} {}", prefix, self.mnemonic,
-                        op1.format(&self.seg_prefix)),
-                    Some(op2) =>
-                        write!(f, "{}{:?} {}, {}", prefix, self.mnemonic,
-                            op1.format(&self.seg_prefix),
-                            op2.format(&self.seg_prefix))
-                }
+        match self.op1 {
+            None => write!(f, "{}{:?}", prefix, self.mnemonic),
+            Some(op1) => match self.op2 {
+                None => write!(f, "{}{:?} {}", prefix, self.mnemonic,
+                    op1.format(&self.seg_prefix)),
+                Some(op2) =>
+                    write!(f, "{}{:?} {}, {}", prefix, self.mnemonic,
+                        op1.format(&self.seg_prefix),
+                        op2.format(&self.seg_prefix))
             }
         }
     }
@@ -152,7 +170,7 @@ pub enum Mnemonic {
 }
 
 impl Mnemonic {
-    pub fn is_jump(&self) -> bool {
+    pub fn is_branch(&self) -> bool {
         match *self {
             Mnemonic::JMP | Mnemonic::JO | Mnemonic::JB | Mnemonic::JNB |
             Mnemonic::JZ | Mnemonic::JNZ | Mnemonic::JBE | Mnemonic::JNBE |

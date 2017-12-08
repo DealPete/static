@@ -1,5 +1,5 @@
 use defs::*;
-use emu;
+use analyse;
 
 pub fn does_int_end_program(instruction: &Instruction) -> bool {
     if let Some(Operand::Imm8(func)) = instruction.op1 {
@@ -17,5 +17,5 @@ pub fn is_int_loose_end(instruction: &Instruction) -> bool {
 
 pub fn does_int21_always_end_program(inst_index: usize, program: &Program) -> bool {
     let values = vec!(0, 0x4c).into_iter().collect();
-    return emu::reg_at_is_always_in(Register::AH, inst_index, values, program);
+    return analyse::reg8_at_is_always_in(Register::AH, inst_index, values, program);
 }
