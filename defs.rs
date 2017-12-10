@@ -1,25 +1,39 @@
+use state::*;
 use graph;
 use std::fmt;
 use std::collections::HashMap;
 
 pub struct Program {
-    pub buffer: Vec<u8>,
-    pub entry_point: usize,
-    pub load_module_segment: u16,
+    pub initial_state: State,
+    pub load_module: LoadModule,
     pub flow_graph: graph::FlowGraph,
     pub instructions: HashMap<usize, Instruction>
+}
+
+impl Program {
+    pub fn entry_point(&self) -> usize {
+        16 * self.initial_state.cs as usize
+            + self.initial_state.ip as usize
+            - 16 * self.load_module.memory_segment as usize
+    }
+
+    pub fn get_memory_address(&self, offset: usize) -> usize {
+        16 * self.load_module.memory_segment as usize + offset
+    }
+
+    pub fn get_inst_offset(&self, address: usize) -> usize {
+        address - 16 * self.load_module.memory_segment as usize
+    }
 }
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::new();
-        for i in 0..self.buffer.len() {
+        for i in 0..self.load_module.buffer.len() {
             if let Some(instruction) = self.instructions.get(&i) {
                 let prefix = {
-                    let node = match self.flow_graph.get_node_at(i) {
-                        None => panic!("instruction 0x{:x} has no node!", i),
-                        Some(node) => node
-                    };
+                    let node = self.flow_graph.get_node_at(i).expect(
+                        format!("instruction 0x{:x} has no node!", i).as_str());
                     if node.insts[0] == i && node.label {
                         format!("{:4x}:   ", i)
                     } else {
@@ -38,7 +52,7 @@ impl fmt::Display for Program {
                     format!("{}", instruction)
                 };
                 output.push_str(format!("{}{}{}\n", prefix.as_str(), inst_output,
-                    if i == self.entry_point {
+                    if i == self.entry_point() {
                         "\t; program entry point"
                     } else {
                         ""
@@ -47,6 +61,19 @@ impl fmt::Display for Program {
         }
         write!(f, "{}", output)
     }
+}
+
+pub trait Context {
+    fn simulate_int(&self, state: State, inst:&Instruction) -> State;
+    fn does_int_end_program(&self, instruction: &Instruction) -> bool;
+    fn does_int_always_end_program(&self, inst_index: usize, program: &Program) -> bool;
+    fn is_int_loose_end(&self, instruction: &Instruction) -> bool;
+}
+
+pub struct LoadModule {
+    pub file_offset: usize,
+    pub memory_segment: u16,
+    pub buffer: Vec<u8>
 }
 
 pub struct Instruction {
@@ -87,7 +114,7 @@ impl Instruction {
     }
 
     pub fn unpack_op2(&self) -> Operand {
-        self.op1.expect(
+        self.op2.expect(
             format!("Instruction doesn't have a second operand: {}", self).as_str())
     }
 }
@@ -189,7 +216,7 @@ pub enum Register {
     BP, SP, SS, CS, DS, ES, DI, SI, FS, GS, IP
 }
 
-pub fn get_word(buffer : &Vec<u8>, offset: usize) -> u16 {
+pub fn get_word(buffer : &[u8], offset: usize) -> u16 {
 	let mut word = buffer[offset + 1] as u16;
 	word <<= 8;
 	word += buffer[offset] as u16;

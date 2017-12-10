@@ -1,8 +1,9 @@
+use defs::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use defs::*;
 
+#[derive(Clone)]
 pub struct State {
     pub cs : u16,
     pub ip : u16,
@@ -22,6 +23,10 @@ impl State {
         }
     }
     
+    pub fn next_inst_address(&self) -> usize {
+        16 * self.cs as usize + self.ip as usize
+    }
+
     pub fn union(self, state: State) -> State {
         if self.cs != state.cs || self.ip != state.ip {
             panic!("Unifying states with different cs/ip unimplemented");
@@ -85,6 +90,7 @@ impl State {
                 Word::Int(set)
             },
             Register::DS => self.regs.ds.clone(),
+            Register::SP => self.regs.sp.clone(),
             _ => panic!("register {:?} not implemented yet in emulator.", reg)
         }
     }
@@ -117,7 +123,7 @@ impl State {
                     .. self.regs
                 },
                 Register::DL => Registers {
-                    ax: Word::Bytes(value, self.get_reg8(Register::DH)),
+                    dx: Word::Bytes(value, self.get_reg8(Register::DH)),
                     .. self.regs
                 },
                 Register::DH => Registers {
@@ -163,7 +169,8 @@ impl fmt::Display for State {
     }
 }
 
-struct Registers {
+#[derive(Clone)]
+pub struct Registers {
     ax : Word,
     bx : Word,
     cx : Word,
@@ -178,7 +185,7 @@ struct Registers {
 }
 
 impl Registers {
-    fn new() -> Registers {
+    pub fn new() -> Registers {
         return Registers {
             ax : Word::Undefined,
             bx : Word::Undefined,
@@ -234,7 +241,7 @@ pub enum Word {
 }
 
 impl Word {
-    fn new(word: u16) -> Word {
+    pub fn new(word: u16) -> Word {
         let mut word_set = HashSet::new();
         word_set.insert(word);
         Word::Int(word_set)
@@ -347,7 +354,7 @@ pub enum Byte {
 }
 
 impl Byte {
-    fn new(byte: u8) -> Byte {
+    pub fn new(byte: u8) -> Byte {
         let mut byte_set = HashSet::new();
         byte_set.insert(byte);
         Byte::Int(byte_set)
@@ -420,7 +427,7 @@ impl fmt::Display for Byte {
 }
 
 #[derive(Copy, Clone, PartialEq)]
-struct Flags {
+pub struct Flags {
     carry : Flag,
     parity : Flag,
     adjust : Flag,
@@ -432,7 +439,7 @@ struct Flags {
 }
 
 impl Flags {
-    fn new() -> Flags {
+    pub fn new() -> Flags {
         Flags {
             carry: Flag::Undefined,
             parity: Flag::Undefined,
@@ -508,103 +515,7 @@ impl Flag {
     }
 }
 
-// We assume the PSP is loaded at 0x75a and the program at 0x76a.
-// This is what DOSBOX uses as a default.
-fn get_initial_state(buffer: &Vec<u8>) -> State {
-    if &buffer[0..2] == [0x4d, 0x5a] {
-        State {
-            cs: get_word(buffer, 0x16).wrapping_add(0x76a),
-            ip: get_word(buffer, 0x14),
-            regs: Registers {
-                ds: Word::new(0x75a),
-                es: Word::new(0x75a),
-                ss: Word::new(get_word(buffer, 0xe).wrapping_add(0x76a)),
-                sp: Word::new(get_word(buffer, 0x10)),
-                .. Registers::new()
-            },
-            .. State::new()
-        }
-    } else {
-        State {
-            cs: 0x75a,
-            ip: 0x100,
-            regs: Registers {
-                ds: Word::new(0x75a),
-                es: Word::new(0x75a),
-                ss: Word::new(0x75a),
-                sp: Word::new(0xfffe),
-                .. Registers::new()
-            },
-            .. State::new()
-        }
-    }
-}
-
-pub fn emulate_next(state: State, instructions: &HashMap<usize, Instruction>) -> State {
-    let offset = (16*state.cs + state.ip) as usize;
-    match instructions.get(&offset) {
-        Some(inst) => {
-            let new_state = match inst.mnemonic {
-                Mnemonic::CALL => emulate_call(state, inst),
-                Mnemonic::MOV => emulate_mov(state, inst),
-                Mnemonic::INT => emulate_int(state, inst),
-                Mnemonic::POP => emulate_pop(state, inst),
-                Mnemonic::PUSH => emulate_push(state, inst),
-                _ => panic!("unimplemented instruction at {:x}", offset)
-            };
-            State {
-                ip: new_state.ip + inst.length as u16,
-                .. new_state
-            }
-        },
-        None => panic!("no instruction at {:x}", offset)
-    }
-}
-
-fn emulate_call(state: State, inst: &Instruction) -> State {
-    state
-}
-
-fn emulate_int(state: State, inst: &Instruction) -> State {
-    state
-}
-
-fn emulate_mov(state: State, inst: &Instruction) -> State {
-    let (op1, op2) = (inst.unpack_op1(), inst.unpack_op2());
-    match op1 {
-        Operand::Register8(_) | Operand::Imm8(_) => {
-            let byte = get_byte_op(&state, op2);
-            set_byte_op(state, op1, byte)
-        }
-        _ => {
-            let word = get_word_op(&state, op2);
-            set_word_op(state, op1, word)
-        }
-    }
-}
-
-
-fn emulate_pop(state: State, inst: &Instruction) -> State {
-    match inst.op1 {
-        Some(Operand::Register16(target_reg)) => match state.regs.sp {
-            Word::Undefined => state.set_reg16(target_reg, Word::Undefined),
-            _ => panic!("stack not yet implemented")
-        },
-        _ => panic!("Incorrect operand for PUSH.")
-    }
-}
-
-fn emulate_push(state: State, inst: &Instruction) -> State {
-    if state.regs.sp == Word::Undefined {
-        return state;
-    }
-    panic!("stack not yet implemented.")
-    /*match inst.op1 {
-        Some(Operand::Register8(source_reg) => {
-        }*/
-}
-
-fn get_word_op(state: &State, operand: Operand) -> Word {
+pub fn get_word_op(state: &State, operand: Operand) -> Word {
     match operand {
         Operand::Register8(_) | Operand::Imm8(_) =>
             panic!("can't get word from byte source"),
@@ -619,7 +530,7 @@ fn get_word_op(state: &State, operand: Operand) -> Word {
     }
 }
 
-pub fn read_word_op(state: &State, operand: Operand) -> Word {
+pub fn get_combined_word_op(state: &State, operand: Operand) -> Word {
     let word = get_word_op(state, operand);
     if let Word::Bytes(bytel, byteh) = word {
         bytel.combine(byteh)
@@ -628,7 +539,7 @@ pub fn read_word_op(state: &State, operand: Operand) -> Word {
     }
 }
 
-fn get_byte_op(state: &State, operand: Operand) -> Byte {
+pub fn get_byte_op(state: &State, operand: Operand) -> Byte {
     match operand {
         Operand::Register16(_) | Operand::Imm16(_) =>
             panic!("can't get word from byte source"),
@@ -643,11 +554,7 @@ fn get_byte_op(state: &State, operand: Operand) -> Byte {
     }
 }
 
-pub fn read_byte_op(state: &State, operand: Operand) -> Byte {
-    get_byte_op(state, operand)
-}
-
-fn set_word_op(state: State, operand: Operand, word: Word) -> State {
+pub fn set_word_op(state: State, operand: Operand, word: Word) -> State {
     match operand {
         Operand::Register16(target_reg) =>
             state.set_reg16(target_reg, word),
@@ -674,7 +581,7 @@ fn set_word_op(state: State, operand: Operand, word: Word) -> State {
     }
 }
 
-fn set_byte_op(state: State, operand: Operand, byte: Byte) -> State {
+pub fn set_byte_op(state: State, operand: Operand, byte: Byte) -> State {
     match operand {
         Operand::Register8(target_reg) =>
             state.set_reg8(target_reg, byte),

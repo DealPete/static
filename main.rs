@@ -1,11 +1,13 @@
+mod analyse;
 mod defs;
 mod dis;
 mod dos;
-mod emu;
+mod sim;
 mod graph;
-mod analyse;
+mod state;
 
 use defs::*;
+use std::collections::HashMap;
 
 fn main() {
 	use std::env;
@@ -19,29 +21,18 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let entry_point = find_entry(&buffer);
-        let program = dis::decode_file(buffer, entry_point);
+        let context = dos::DOS { };
+
+        let program = Program {
+            initial_state: dos::initial_state(&buffer),
+            load_module: dos::load_module(buffer),
+            flow_graph: graph::FlowGraph::new(),
+            instructions: HashMap::new()
+        };
+
+        let program = dis::disassemble_load_module(program, context);
         println!("{}", program);
-        //println!("{}", graph::generate_flow_graph(&program));
     } else {
 		println!("usage: dis <file-to-disassemble>");
-    }
-}
-
-// We add 0x10 (load_module_segment_offset), then subtract it in
-// the final calculation, to avoid dealing with
-// a negative code_segment, since some applications (e.g. DEBUG.EXE)
-// have an initial code_segment of 0xFFFE, which pushes CS back
-// 0x100 bytes to the beginning of the PSP.
-pub fn find_entry(buffer: &Vec<u8>) -> usize {
-    if &buffer[0..2] == [0x4d, 0x5a] {
-        let load_module_segment_offset = 0x10;  // length of PSP
-        let header_size = 16*get_word(buffer, 0x08) as usize;
-        let instruction_pointer = get_word(buffer, 0x14) as usize;
-        let code_segment = get_word(buffer, 0x16).wrapping_add(load_module_segment_offset);
-        return header_size + 16*(code_segment as usize) +
-            instruction_pointer - 16*(load_module_segment_offset as usize);
-    } else {
-        return 0;
     }
 }

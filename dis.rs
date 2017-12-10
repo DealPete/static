@@ -4,22 +4,17 @@ use defs::*;
 use analyse;
 use std::collections::HashMap;
 
-pub fn disassemble_load_module(buffer: Vec<u8>, entry: usize) -> Program {
-    let mut program = Program {
-        buffer: buffer,
-        entry_point: entry,
-        instructions: HashMap::new(),
-        flow_graph: graph::FlowGraph::new()
-    };
+pub fn disassemble_load_module<C: Context>(mut program: Program, context: C) -> Program {
+    let entry = program.entry_point();
 
     program.flow_graph.add_node_at(entry, true);
-    let mut loose_ends = walk_buffer(&mut program, entry);
+    let mut loose_ends = walk_buffer(&mut program, &context, entry);
     
     while let Some(mut loose_end) = loose_ends.pop() {
         if let Some(instruction) = program.instructions.get(&loose_end) {
             match instruction.mnemonic {
                 Mnemonic::INT => {
-                    if dos::does_int21_always_end_program(loose_end, &program) {
+                    if context.does_int_always_end_program(loose_end, &program) {
                         continue;
                     } else {
                         program.flow_graph.extend_node(loose_end, instruction.length);
@@ -30,7 +25,7 @@ pub fn disassemble_load_module(buffer: Vec<u8>, entry: usize) -> Program {
                     match program.flow_graph.get_node_index_at(loose_end) {
                         Some(source_node) => {
                             let destinations = analyse::find_indirect_branch_dests(
-                                loose_end, &program); 
+                                loose_end, &program, &context); 
                             for dest in destinations {
                                 add_jump_to_flow_graph(&mut program.flow_graph, source_node, dest);
                                 loose_ends.push(dest);
@@ -44,14 +39,14 @@ pub fn disassemble_load_module(buffer: Vec<u8>, entry: usize) -> Program {
             }
         }
 
-        let mut new_loose_ends = walk_buffer(&mut program, loose_end);
+        let mut new_loose_ends = walk_buffer(&mut program, &context, loose_end);
         loose_ends.append(&mut new_loose_ends);
     }
 
-    return program;
+    program
 }
 
-pub fn walk_buffer(program: &mut Program, entry: usize) -> Vec<usize> {
+pub fn walk_buffer<C: Context>(program: &mut Program, context: &C, entry: usize) -> Vec<usize> {
     let mut offset;
     let mut loose_ends = Vec::new();
     let mut jump_destinations : Vec<usize> = Vec::new();
@@ -64,7 +59,7 @@ pub fn walk_buffer(program: &mut Program, entry: usize) -> Vec<usize> {
                 offset = dest;
                 let mut cont = true;
                 while cont {
-                    let inst = match decode_instruction(&program.buffer, offset) {
+                    let inst = match decode_instruction(&program.load_module.buffer, offset) {
                         Ok(instruction) => instruction,
                         Err(err) => {
                            println!("{}", program);
@@ -73,17 +68,17 @@ pub fn walk_buffer(program: &mut Program, entry: usize) -> Vec<usize> {
                     };
                     let next_offset = inst.length as usize + offset;
                     if inst.mnemonic == Mnemonic::INT {
-                        if dos::does_int_end_program(&inst) {
+                        if context.does_int_end_program(&inst) {
                             cont = false;
                         }
-                        if dos::is_int_loose_end(&inst) {
+                        if context.is_int_loose_end(&inst) {
                             loose_ends.push(offset);
                             cont = false;
                         }
                     }
                     if inst.mnemonic.is_branch()
                         || inst.mnemonic == Mnemonic::RET
-                        || next_offset >= program.buffer.len() {
+                        || next_offset >= program.load_module.buffer.len() {
                         cont = false;
                     }
                     if inst.mnemonic.is_branch() {
@@ -126,7 +121,7 @@ fn handle_branch(program: &mut Program, node: usize, offset: usize, inst: &Instr
         jump_destinations.push(dest);
     }
 
-    if inst.mnemonic != Mnemonic::JMP && next_offset < program.buffer.len() {
+    if inst.mnemonic != Mnemonic::JMP && next_offset < program.load_module.buffer.len() {
         match program.flow_graph.get_node_index_at(next_offset) {
             Some(next_node) => program.flow_graph.add_edge(node, next_node),
             None => {
@@ -155,7 +150,7 @@ fn add_jump_to_flow_graph(flow_graph: &mut graph::FlowGraph, source_node: usize,
     }
 }
 
-fn decode_instruction(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
 	let code = buffer[offset];
 	if code < 0x40 && code % 8 < 6 {
 		decode_regular_inst(&buffer, offset)
@@ -197,7 +192,7 @@ fn decode_instruction(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, St
 	}
 }
 
-fn decode_with_segment_prefix(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_with_segment_prefix(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     match decode_instruction(&buffer, offset + 1) {
         Err(err) => return Err(err),
         Ok(mut inst) => {
@@ -214,7 +209,7 @@ fn decode_with_segment_prefix(buffer: &Vec<u8>, offset: usize) -> Result<Instruc
     }
 }
 
-fn decode_with_rep_prefix(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_with_rep_prefix(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     match decode_instruction(&buffer, offset + 1) {
         Err(err) => return Err(err),
         Ok(mut inst) => {
@@ -229,7 +224,7 @@ fn decode_with_rep_prefix(buffer: &Vec<u8>, offset: usize) -> Result<Instruction
     }
 }
 
-fn decode_regular_inst(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_regular_inst(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
 	let code = buffer[offset];
 
 	let mut inst = Instruction::new(
@@ -301,7 +296,7 @@ fn decode_bcd_inst(code: u8) -> Result<Instruction, String> {
     return Ok(inst);
 }
         
-fn decode_inc_dec_push_pop_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_inc_dec_push_pop_reg(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let mut inst = Instruction::new(match buffer[offset] {
         0x40...0x47 => Mnemonic::INC,
         0x48...0x4f => Mnemonic::DEC,
@@ -314,7 +309,7 @@ fn decode_inc_dec_push_pop_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instru
     return Ok(inst);
 }
 
-fn decode_jump_imm8(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_jump_imm8(buffer: &[u8], offset: usize) -> Instruction {
 	let mut inst = Instruction::new(match buffer[offset] {
 		0x70 => Mnemonic::JO,
 		0x71 => Mnemonic::JNO,
@@ -344,7 +339,7 @@ fn decode_jump_imm8(buffer: &Vec<u8>, offset: usize) -> Instruction {
     return inst;
 }
 
-fn decode_imm_inst(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_imm_inst(buffer: &[u8], offset: usize) -> Instruction {
 	let code = buffer[offset];
 	let mut inst = Instruction::new(
 		match buffer[offset + 1] & 0x38 {
@@ -372,7 +367,7 @@ fn decode_imm_inst(buffer: &Vec<u8>, offset: usize) -> Instruction {
     return inst;
 }
 
-fn decode_test_xchg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_test_xchg(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(match code & 2 {
         0 => Mnemonic::TEST,
@@ -385,7 +380,7 @@ fn decode_test_xchg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, Stri
     return Ok(inst);
 }
 
-fn decode_move_segment_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_move_segment_reg(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(Mnemonic::MOV);
     let (op, _, length) = decode_mod_rm(buffer, offset + 1, 1, 0);
@@ -405,7 +400,7 @@ fn decode_move_segment_reg(buffer: &Vec<u8>, offset: usize) -> Result<Instructio
     return Ok(inst);
 }
 
-fn decode_lea(buffer: &Vec<u8>, offset:usize) -> Result<Instruction, String> {
+fn decode_lea(buffer: &[u8], offset:usize) -> Result<Instruction, String> {
     let mut inst = Instruction::new(Mnemonic::LEA);
     let (op1, op2, length) = decode_mod_rm(buffer, offset + 1, 1, 2);
     inst.op1 = op1;
@@ -428,7 +423,7 @@ fn decode_xchg_ax(code: u8) -> Result<Instruction, String> {
     return Ok(inst);
 }
 
-fn decode_mov_moffset(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_mov_moffset(buffer: &[u8], offset: usize) -> Instruction {
     let code = buffer[offset];
     let mut inst = Instruction::new(Mnemonic::MOV);
     let op1 = Some(if code & 1 != 0 {
@@ -448,7 +443,7 @@ fn decode_mov_moffset(buffer: &Vec<u8>, offset: usize) -> Instruction {
     return inst;
 }
 
-fn decode_string_op(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_string_op(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(match code {
         0xa4 => Mnemonic::MOVSB,
@@ -467,7 +462,7 @@ fn decode_string_op(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, Stri
     return Ok(inst);
 }
 
-fn decode_test_ax(buffer: &Vec<u8>, offset:usize) -> Result<Instruction, String> {
+fn decode_test_ax(buffer: &[u8], offset:usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let size = code & 1;
     let mut inst = Instruction::new(Mnemonic::TEST);
@@ -484,7 +479,7 @@ fn decode_test_ax(buffer: &Vec<u8>, offset:usize) -> Result<Instruction, String>
     return Ok(inst);
 }
 
-fn decode_mov_imm_reg(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_mov_imm_reg(buffer: &[u8], offset: usize) -> Instruction {
 	let code = buffer[offset];
 	let mut inst = Instruction::new(Mnemonic::MOV);
 	match code & 8 {
@@ -504,7 +499,7 @@ fn decode_mov_imm_reg(buffer: &Vec<u8>, offset: usize) -> Instruction {
 	return inst;
 }
 
-fn decode_ret(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_ret(buffer: &[u8], offset: usize) -> Instruction {
     let mut inst = Instruction::new(Mnemonic::RET);
     if buffer[offset] & 1 == 0 {
         inst.op1 = Some(Operand::Imm16(buffer[offset + 1] as i16));
@@ -515,7 +510,7 @@ fn decode_ret(buffer: &Vec<u8>, offset: usize) -> Instruction {
     return inst;
 }
 
-fn decode_mov_imm_reg_mem(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_mov_imm_reg_mem(buffer: &[u8], offset: usize) -> Instruction {
     let mut inst = Instruction::new(Mnemonic::MOV);
     let size = buffer[offset] & 1;
     let (op, _, mod_rm_length) = decode_mod_rm(buffer, offset + 1, size, 0);
@@ -535,14 +530,14 @@ fn decode_mov_imm_reg_mem(buffer: &Vec<u8>, offset: usize) -> Instruction {
     return inst;
 }
 
-fn decode_int(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_int(buffer: &[u8], offset: usize) -> Instruction {
 	let mut inst = Instruction::new(Mnemonic::INT);
 	inst.op1 = Some(Operand::Imm8(buffer[offset + 1] as i8));
 	inst.length = 2;
 	return inst;
 }
 
-fn decode_shift_rotate(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_shift_rotate(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(match buffer[offset + 1] & 0x38 {
         0x00 => Mnemonic::ROL,
@@ -566,7 +561,7 @@ fn decode_shift_rotate(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, S
     return Ok(inst);
 }
 
-fn decode_in_out(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_in_out(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let mut inst = Instruction::new(
         if code & 2 == 0 {
@@ -585,7 +580,7 @@ fn decode_in_out(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String>
     return Ok(inst);
 }
 
-fn decode_call_jump_rel16(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_call_jump_rel16(buffer: &[u8], offset: usize) -> Instruction {
     let mut inst = Instruction::new(
         match buffer[offset] {
             0xe8 => Mnemonic::CALL,
@@ -597,7 +592,7 @@ fn decode_call_jump_rel16(buffer: &Vec<u8>, offset: usize) -> Instruction {
     return inst;
 }
 
-fn decode_f6_f7(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_f6_f7(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
     let extension = (buffer[offset + 1] & 0x38) >> 3;
     let (op, _, r_length) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
@@ -649,7 +644,7 @@ fn decode_clear_set_flags(code: u8) -> Result<Instruction, String> {
     return Ok(inst);
 }
 
-fn decode_inc_dec_imm(buffer: &Vec<u8>, offset: usize) -> Instruction {
+fn decode_inc_dec_imm(buffer: &[u8], offset: usize) -> Instruction {
 	let mut inst = Instruction::new(
 		match buffer[offset + 1] & 0x38 {
 			0 => Mnemonic::INC,
@@ -663,7 +658,7 @@ fn decode_inc_dec_imm(buffer: &Vec<u8>, offset: usize) -> Instruction {
 	return inst;
 }
 
-fn decode_ff(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
+fn decode_ff(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let extension = (buffer[offset + 1] & 0x38) >> 3;
     let (op, _, length) = decode_mod_rm(buffer, offset + 1, 1, 0);
     let mut inst = Instruction::new(
@@ -685,7 +680,7 @@ fn decode_ff(buffer: &Vec<u8>, offset: usize) -> Result<Instruction, String> {
     return Ok(inst);
 }
 
-fn decode_mod_rm(buffer: &Vec<u8>, offset: usize, size: u8, dir: u8) -> (Option<Operand>, Option<Operand>, u8) {
+fn decode_mod_rm(buffer: &[u8], offset: usize, size: u8, dir: u8) -> (Option<Operand>, Option<Operand>, u8) {
     let reg = |op| {
         match size {
             0 => Operand::Register8(reg8(op)),
