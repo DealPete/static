@@ -10,8 +10,8 @@ const PROGRAM_SEGMENT: u16 = 0x76a;
 pub struct DOS {
 }
 
-impl Context for DOS {
-    fn simulate_int(&self, state: State, inst: &Instruction) -> State {
+impl<'program> Context<'program> for DOS {
+    fn simulate_int(&self, state: State<'program>, inst: &Instruction) -> State<'program> {
         state
     }
 
@@ -35,17 +35,17 @@ impl Context for DOS {
     }
 }
 
-pub fn initial_state(file_buffer: &[u8]) -> State {
-    let mut state = State::new()
+pub fn initial_state<'program>(file_buffer: Vec<u8>, load_module: &'program LoadModule) -> State<'program> {
+    let mut state = State::new(load_module)
         .set_reg16(Register::DS, Word::new(PSP_SEGMENT))
         .set_reg16(Register::ES, Word::new(PSP_SEGMENT));
 
     if file_buffer[0..2] == [0x4d, 0x5a] {
-        state.cs = get_word(file_buffer, 0x16).wrapping_add(PROGRAM_SEGMENT);
-        state.ip = get_word(file_buffer, 0x14);
+        state.cs = get_word(&file_buffer, 0x16).wrapping_add(PROGRAM_SEGMENT);
+        state.ip = get_word(&file_buffer, 0x14);
         state.set_reg16(Register::SS,
-            Word::new(get_word(file_buffer, 0xe).wrapping_add(PROGRAM_SEGMENT)))
-            .set_reg16(Register::SP, Word::new(get_word(file_buffer, 0x10)))
+            Word::new(get_word(&file_buffer, 0xe).wrapping_add(PROGRAM_SEGMENT)))
+            .set_reg16(Register::SP, Word::new(get_word(&file_buffer, 0x10)))
     } else {
         state.cs = PSP_SEGMENT;
         state.ip = 0x100;
@@ -54,7 +54,7 @@ pub fn initial_state(file_buffer: &[u8]) -> State {
     }
 }
 
-pub fn load_module(file_buffer: Vec<u8>) -> LoadModule {
+pub fn load_module(file_buffer: &[u8]) -> LoadModule {
     let mut buffer = Vec::new();
     let header_size = if file_buffer[0..2] == [0x4d, 0x5a] {
         16*get_word(&file_buffer, 0x08) as usize

@@ -22,16 +22,18 @@ fn main() {
 			"Failed to read into buffer.");
 
         let context = dos::DOS { };
+        
+        let load_module = dos::load_module(&buffer);
+        let initial_state = dos::initial_state(buffer, &load_module); 
 
         let program = Program {
-            initial_state: dos::initial_state(&buffer),
-            load_module: dos::load_module(buffer),
+            initial_state: initial_state,
             flow_graph: graph::FlowGraph::new(),
             instructions: HashMap::new()
         };
 
-        let program = dis::disassemble_load_module(program, context);
-        println!("{}", program);
+        let final_program = dis::disassemble_load_module(program, context);
+        println!("{}", final_program);
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }

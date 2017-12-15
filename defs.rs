@@ -3,33 +3,32 @@ use graph;
 use std::fmt;
 use std::collections::HashMap;
 
-pub struct Program {
-    pub initial_state: State,
-    pub load_module: LoadModule,
+pub struct Program<'program> {
+    pub initial_state: State<'program>,
     pub flow_graph: graph::FlowGraph,
     pub instructions: HashMap<usize, Instruction>
 }
 
-impl Program {
+impl<'program> Program<'program> {
     pub fn entry_point(&self) -> usize {
         16 * self.initial_state.cs as usize
             + self.initial_state.ip as usize
-            - 16 * self.load_module.memory_segment as usize
+            - 16 * self.initial_state.load_module.memory_segment as usize
     }
 
     pub fn get_memory_address(&self, offset: usize) -> usize {
-        16 * self.load_module.memory_segment as usize + offset
+        16 * self.initial_state.load_module.memory_segment as usize + offset
     }
 
     pub fn get_inst_offset(&self, address: usize) -> usize {
-        address - 16 * self.load_module.memory_segment as usize
+        address - 16 * self.initial_state.load_module.memory_segment as usize
     }
 }
 
-impl fmt::Display for Program {
+impl<'program> fmt::Display for Program<'program> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::new();
-        for i in 0..self.load_module.buffer.len() {
+        for i in 0..self.initial_state.load_module.buffer.len() {
             if let Some(instruction) = self.instructions.get(&i) {
                 let prefix = {
                     let node = self.flow_graph.get_node_at(i).expect(
@@ -63,8 +62,8 @@ impl fmt::Display for Program {
     }
 }
 
-pub trait Context {
-    fn simulate_int(&self, state: State, inst:&Instruction) -> State;
+pub trait Context<'state> {
+    fn simulate_int(&self, state: State<'state>, inst:&Instruction) -> State<'state>;
     fn does_int_end_program(&self, instruction: &Instruction) -> bool;
     fn does_int_always_end_program(&self, inst_index: usize, program: &Program) -> bool;
     fn is_int_loose_end(&self, instruction: &Instruction) -> bool;
@@ -77,9 +76,6 @@ pub struct LoadModule {
 }
 
 pub struct Instruction {
-    pub next: Option<usize>,
-    pub label: bool,
-    pub seg_prefix: Option<Register>,
     pub rep_prefix: Option<Mnemonic>,
     pub mnemonic: Mnemonic,
     pub length: u8,
@@ -90,12 +86,9 @@ pub struct Instruction {
 impl Instruction {
     pub fn new(mnemonic: Mnemonic) -> Instruction {
         Instruction {
-            next: None,
-            seg_prefix: None,
             rep_prefix: None,
             mnemonic: mnemonic,
             length: 0,
-            label: false,
             op1: None,
             op2: None
         }
@@ -128,60 +121,66 @@ impl fmt::Display for Instruction {
         match self.op1 {
             None => write!(f, "{}{:?}", prefix, self.mnemonic),
             Some(op1) => match self.op2 {
-                None => write!(f, "{}{:?} {}", prefix, self.mnemonic,
-                    op1.format(&self.seg_prefix)),
+                None => write!(f, "{}{:?} {}", prefix, self.mnemonic, op1),
                 Some(op2) =>
-                    write!(f, "{}{:?} {}, {}", prefix, self.mnemonic,
-                        op1.format(&self.seg_prefix),
-                        op2.format(&self.seg_prefix))
+                    write!(f, "{}{:?} {}, {}", prefix, self.mnemonic, op1, op2)
             }
         }
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Operand {
     Register8(Register),
     Register16(Register),
     Imm8(i8),
     Imm16(i16),
-    Ptr16(u16),
-    PtrReg(Register),
-    PtrRegReg(Register, Register),
-    PtrRegDisp8(Register, u8),
-    PtrRegRegDisp8(Register, Register, u8),
-    PtrRegDisp16(Register, u16),
-    PtrRegRegDisp16(Register, Register, u16)
+    SegPtr(Register, Pointer),
 }
 
-impl Operand {
-    pub fn format(&self, prefix: &Option<Register>) -> String {
-        let pfx = match prefix {
-            &Some(ref reg) => format!("{:?}:", reg),
-            &None => String::from("")
-        };
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             &Operand::Register8(ref reg) |
-                &Operand::Register16(ref reg) => format!("{:?}", reg),
-            &Operand::Imm8(val) => format!("{:02x}", val),
-            &Operand::Imm16(val) => format!("{:04x}", val),
-            &Operand::Ptr16(val) => format!("[{}{:04x}]", pfx, val),
-            &Operand::PtrReg(ref reg) => format!("[{}{:?}]", pfx, reg),
-            &Operand::PtrRegReg(ref reg1, ref reg2) =>
-                format!("[{}{:?}+{:?}]", pfx, reg1, reg2),
-            &Operand::PtrRegDisp8(ref reg, val) =>
-                format!("[{}{:?}+{:02x}]", pfx, reg, val),
-            &Operand::PtrRegRegDisp8(ref reg1, ref reg2, val) =>
-                format!("[{}{:?}+{:?}+{:02x}]", pfx, reg1, reg2, val),
-            &Operand::PtrRegDisp16(ref reg, val) =>
-                format!("[{}{:?}+{:04x}]", pfx, reg, val),
-            &Operand::PtrRegRegDisp16(ref reg1, ref reg2, val) =>
-                format!("[{}{:?}+{:?}+{:04x}]", pfx, reg1, reg2, val)
+                &Operand::Register16(ref reg) => write!(f, "{:?}", reg),
+            &Operand::Imm8(val) => write!(f, "{:02x}", val),
+            &Operand::Imm16(val) => write!(f, "{:04x}", val),
+            &Operand::SegPtr(segment, pointer) => {
+                let pfx = match segment {
+                    Register::DS => String::from(""),
+                    _ => format!("{:?}:", segment)
+                };
+                match pointer {
+                    Pointer::Disp16(val) => write!(f, "[{}{:04x}]", pfx, val),
+                    Pointer::Reg(ref reg) => write!(f, "[{}{:?}]", pfx, reg),
+                    Pointer::RegReg(ref reg1, ref reg2) =>
+                        write!(f, "[{}{:?}+{:?}]", pfx, reg1, reg2),
+                    Pointer::RegDisp8(ref reg, val) =>
+                        write!(f, "[{}{:?}+{:02x}]", pfx, reg, val),
+                    Pointer::RegRegDisp8(ref reg1, ref reg2, val) =>
+                        write!(f, "[{}{:?}+{:?}+{:02x}]", pfx, reg1, reg2, val),
+                    Pointer::RegDisp16(ref reg, val) =>
+                        write!(f, "[{}{:?}+{:04x}]", pfx, reg, val),
+                    Pointer::RegRegDisp16(ref reg1, ref reg2, val) =>
+                        write!(f, "[{}{:?}+{:?}+{:04x}]", pfx, reg1, reg2, val)
+                }
+            }
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
+pub enum Pointer {
+    Disp16(u16),
+    Reg(Register),
+    RegReg(Register, Register),
+    RegDisp8(Register, u8),
+    RegRegDisp8(Register, Register, u8),
+    RegDisp16(Register, u16),
+    RegRegDisp16(Register, Register, u16)
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Mnemonic {
     ADC, ADD, AND, CALL, CMP, DEC, INC, INT, JMP, LEA, MOV, NEG, NOP, NOT,
     OR, POP, PUSH, RET, SBB, SUB, TEST, XCHG, XOR,
@@ -213,7 +212,7 @@ impl Mnemonic {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Register {
     AX, AL, AH, BX, BL, BH, CX, CL, CH, DX, DL, DH,
-    BP, SP, SS, CS, DS, ES, DI, SI, FS, GS, IP
+    BP, SP, SS, CS, DS, ES, DI, SI, FS, GS
 }
 
 pub fn get_word(buffer : &[u8], offset: usize) -> u16 {

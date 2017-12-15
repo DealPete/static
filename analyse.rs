@@ -2,40 +2,50 @@ use defs::*;
 use state::*;
 use sim;
 use graph;
-use std::collections::HashMap;
 use std::collections::HashSet;
 
-pub enum SimResult {
-    State(State),
-    Branch(Vec<State>)
+pub enum SimResult<'program> {
+    State(State<'program>),
+    Branch(Vec<State<'program>>)
 }
 
-fn simulate_program_up_to<C: Context>(load_module_offset: usize, program: &Program, context: &C) -> State {
-    let mut state: State;
+fn simulate_program_up_to<'a, 'program, C: Context<'program>>(target_offset: usize, program: &'a Program<'program>, context: &C) -> State<'program> {
     let mut states: Vec<State> = Vec::new();
     let mut final_states = Vec::new();
     states.push(program.initial_state.clone());
 
     while let Some(state) = states.pop() {
-        if state.next_inst_address() == program.get_memory_address(load_module_offset) {
+//        println!("{}", state);
+        let instruction_offset = program.get_inst_offset(state.next_inst_address());
+        if instruction_offset == target_offset {
             final_states.push(state);
             continue;
         }
-        match simulate_next(state, context, &program.instructions) {
+
+        let instruction = program.instructions.get(&instruction_offset)
+            .expect(format!("no instruction at 0x{:x}", instruction_offset).as_str());
+
+//        println!("\nInstruction: {}", instruction);
+        match simulate_instruction(state, context, instruction) {
             SimResult::State(next_state) => states.push(next_state),
             SimResult::Branch(ref mut new_states) => states.append(new_states)
         }
     }
 
-    let mut final_state = State::new();
-    while let Some(state) = final_states.pop() {
-        final_state = final_state.union(state);
-    }
+    match final_states.pop() {
+        None => panic!("no states reached target instruction"),
+        Some(mut final_state) => {
+            while let Some(state) = final_states.pop() {
+                final_state = final_state.union(state);
+            }
 
-    final_state
+            println!("{}", final_state);
+            final_state
+        }
+    }
 }
 
-fn branch(mut state: State, instruction: &Instruction) -> Vec<State> {
+fn branch<'program>(mut state: State<'program>, instruction: &Instruction) -> Vec<State<'program>> {
     let mut new_states = Vec::new();
 
     let offsets = match instruction.op1 {
@@ -46,6 +56,11 @@ fn branch(mut state: State, instruction: &Instruction) -> Vec<State> {
 
     for offset in offsets {
         let mut new_state = state.clone();
+        new_state.ip = new_state.ip.wrapping_add(instruction.length as u16);
+        if instruction.mnemonic == Mnemonic::CALL {
+            let return_address = Word::new(new_state.ip);
+            new_state = sim::push_word(new_state, return_address);
+        }
         new_state.ip = new_state.ip.wrapping_add(offset as u16);
         new_states.push(new_state);
     }
@@ -60,29 +75,24 @@ fn branch(mut state: State, instruction: &Instruction) -> Vec<State> {
     }
 }
 
-fn simulate_next<C: Context>(state: State, context: &C, instructions: &HashMap<usize, Instruction>) -> SimResult {
-    let address = state.next_inst_address();
-
-    match instructions.get(&address) {
-        Some(inst) => {
-            if inst.mnemonic.is_branch() {
-                SimResult::Branch(branch(state, inst))
-            } else if inst.mnemonic == Mnemonic::INT {
-                SimResult::State(context.simulate_int(state, inst))
-            } else {
-                SimResult::State(sim::simulate_instruction(state, context, inst))
-            }
-        },
-        None => panic!("no instruction at memory address 0x{:x}", address)
+fn simulate_instruction<'program, C: Context<'program>>(mut state: State<'program>, context: &C, instruction: &Instruction) -> SimResult<'program> {
+    if instruction.mnemonic.is_branch() {
+        SimResult::Branch(branch(state, instruction))
+    } else if instruction.mnemonic == Mnemonic::INT {
+        state.ip = state.ip.wrapping_add(instruction.length as u16);
+        SimResult::State(context.simulate_int(state, instruction))
+    } else {
+        SimResult::State(sim::simulate_instruction(state, context, instruction))
     }
 }
 
-pub fn find_indirect_branch_dests<C: Context>(offset: usize, program: &Program, context: &C) -> Vec<usize> {
+pub fn find_indirect_branch_dests<'a, 'program, C: Context<'program>>(offset: usize, program: &'a Program<'program>, context: &C) -> Vec<usize> {
     match program.instructions.get(&offset) {
         None => panic!("asked to simulate program from undiscovered instruction."),
         Some(instruction) => {
             let state = simulate_program_up_to(offset, program, context);
-            match get_combined_word_op(&state, instruction.unpack_op1()) {
+            println!("{}", state.get_combined_word(instruction.unpack_op1()));
+            match state.get_combined_word(instruction.unpack_op1()) {
                 Word::Undefined => panic!("branching to undefined instruction!"),
                 Word::AnyValue => panic!("can't branch to any value"),
                 Word::Int(set) => {
@@ -99,9 +109,9 @@ pub fn find_indirect_branch_dests<C: Context>(offset: usize, program: &Program, 
     }
 }
 
-fn simulate_node_up_to<C: Context>(node: &graph::Node, offset: usize, program: &Program, context: &C) -> State {
+fn simulate_node_up_to<'program, C: Context<'program>>(node: &graph::Node, offset: usize, program: &'program Program, context: &C) -> State<'program> {
     let mut next_offset = node.insts[0];
-    let mut state = State::new();
+    let mut state = State::new(&program.initial_state.load_module);
     state.cs = 0;
     state.ip = next_offset as u16;
 
@@ -115,7 +125,7 @@ fn simulate_node_up_to<C: Context>(node: &graph::Node, offset: usize, program: &
     state
 }
 
-pub fn reg8_at_is_always_in<C: Context>(reg: Register, inst_index: usize, values: HashSet<u8>, program: &Program, context: &C) -> bool {
+pub fn reg8_at_is_always_in<'program, C: Context<'program>>(reg: Register, inst_index: usize, values: HashSet<u8>, program: &'program Program<'program>, context: &C) -> bool {
     match program.flow_graph.get_node_at(inst_index) {
         None => panic!("Asked to search from instruction not in graph!"),
         Some(node) => {

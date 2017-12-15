@@ -1,11 +1,10 @@
 use graph;
-use dos;
 use defs::*;
 use analyse;
-use std::collections::HashMap;
 
-pub fn disassemble_load_module<C: Context>(mut program: Program, context: C) -> Program {
+pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a>, context: C) -> Program<'a> {
     let entry = program.entry_point();
+    let mut analysis = Analysis::new();
 
     program.flow_graph.add_node_at(entry, true);
     let mut loose_ends = walk_buffer(&mut program, &context, entry);
@@ -46,7 +45,7 @@ pub fn disassemble_load_module<C: Context>(mut program: Program, context: C) -> 
     program
 }
 
-pub fn walk_buffer<C: Context>(program: &mut Program, context: &C, entry: usize) -> Vec<usize> {
+pub fn walk_buffer<'program, C: Context<'program>>(program: &mut Program, context: &C, entry: usize) -> Vec<usize> {
     let mut offset;
     let mut loose_ends = Vec::new();
     let mut jump_destinations : Vec<usize> = Vec::new();
@@ -59,7 +58,7 @@ pub fn walk_buffer<C: Context>(program: &mut Program, context: &C, entry: usize)
                 offset = dest;
                 let mut cont = true;
                 while cont {
-                    let inst = match decode_instruction(&program.load_module.buffer, offset) {
+                    let inst = match decode_instruction(&program.initial_state.load_module.buffer, offset) {
                         Ok(instruction) => instruction,
                         Err(err) => {
                            println!("{}", program);
@@ -78,7 +77,7 @@ pub fn walk_buffer<C: Context>(program: &mut Program, context: &C, entry: usize)
                     }
                     if inst.mnemonic.is_branch()
                         || inst.mnemonic == Mnemonic::RET
-                        || next_offset >= program.load_module.buffer.len() {
+                        || next_offset >= program.initial_state.load_module.buffer.len() {
                         cont = false;
                     }
                     if inst.mnemonic.is_branch() {
@@ -121,7 +120,7 @@ fn handle_branch(program: &mut Program, node: usize, offset: usize, inst: &Instr
         jump_destinations.push(dest);
     }
 
-    if inst.mnemonic != Mnemonic::JMP && next_offset < program.load_module.buffer.len() {
+    if inst.mnemonic != Mnemonic::JMP && next_offset < program.initial_state.load_module.buffer.len() {
         match program.flow_graph.get_node_index_at(next_offset) {
             Some(next_node) => program.flow_graph.add_edge(node, next_node),
             None => {
@@ -196,12 +195,22 @@ fn decode_with_segment_prefix(buffer: &[u8], offset: usize) -> Result<Instructio
     match decode_instruction(&buffer, offset + 1) {
         Err(err) => return Err(err),
         Ok(mut inst) => {
-            inst.seg_prefix = match buffer[offset] {
-                0x26 => Some(Register::ES),
-                0x2e => Some(Register::CS),
-                0x36 => Some(Register::SS),
-                0x3e => Some(Register::DS),
+            let seg_prefix = match buffer[offset] {
+                0x26 => Register::ES,
+                0x2e => Register::CS,
+                0x36 => Register::SS,
+                0x3e => Register::DS,
                 _ => return Err(String::from("Improper prefix"))
+            };
+            inst.op1 = match inst.op1 {
+                Some(Operand::SegPtr(_, pointer)) =>
+                    Some(Operand::SegPtr(seg_prefix, pointer)),
+                operand => operand
+            };
+            inst.op2 = match inst.op2 {
+                Some(Operand::SegPtr(_, pointer)) =>
+                    Some(Operand::SegPtr(seg_prefix, pointer)),
+                operand => operand
             };
             inst.length += 1;
             return Ok(inst);
@@ -431,7 +440,7 @@ fn decode_mov_moffset(buffer: &[u8], offset: usize) -> Instruction {
     } else {
         Operand::Register16(Register::AX)
     });
-    let op2 = Some(Operand::Ptr16(get_word(buffer, offset + 1)));
+    let op2 = Some(Operand::SegPtr(Register::DS, Pointer::Disp16(get_word(buffer, offset + 1))));
     if code & 2 != 0 {
         inst.op1 = op2;
         inst.op2 = op1;
@@ -563,6 +572,7 @@ fn decode_shift_rotate(buffer: &[u8], offset: usize) -> Result<Instruction, Stri
 
 fn decode_in_out(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = buffer[offset];
+
     let mut inst = Instruction::new(
         if code & 2 == 0 {
             Mnemonic::IN
@@ -570,13 +580,23 @@ fn decode_in_out(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
             Mnemonic::OUT
         }
     );
-    let (op, length) = if code & 8 == 0 {
+    
+    let dest = if code & 1 == 0 {
+        Operand::Register8(Register::AL)
+    } else {
+        Operand::Register16(Register::AX)
+    };
+
+    let (source, length) = if code & 8 == 0 {
         (Operand::Imm8(buffer[offset + 1] as i8), 2)
     } else {
         (Operand::Register16(Register::DX), 1)
     };
-    inst.op1 = Some(op);
+
+    inst.op1 = if code & 2 == 0 { Some(dest) } else { Some(source) };
+    inst.op2 = if code & 2 == 0 { Some(source) } else { Some(dest) };
     inst.length = length;
+
     return Ok(inst);
 }
 
@@ -695,36 +715,57 @@ fn decode_mod_rm(buffer: &[u8], offset: usize, size: u8, dir: u8) -> (Option<Ope
     let (r_op1, r_op2, r_length) = match mode {
         0 => match op2
             {
-            0 => (reg(op1), Operand::PtrRegReg(Register::BX, Register::SI), 1),
-            1 => (reg(op1), Operand::PtrRegReg(Register::BX, Register::DI), 1),
-            2 => (reg(op1), Operand::PtrRegReg(Register::BP, Register::SI), 1),
-            3 => (reg(op1), Operand::PtrRegReg(Register::BP, Register::DI), 1),
-            4 => (reg(op1), Operand::PtrReg(Register::SI), 1),
-            5 => (reg(op1), Operand::PtrReg(Register::DI), 1),
-            6 => (reg(op1), Operand::Ptr16(get_word(&buffer, offset + 1)), 3),
-            7 => (reg(op1), Operand::PtrReg(Register::BX), 1),
+            0 => (reg(op1), Operand::SegPtr(Register::DS,
+                Pointer::RegReg(Register::BX, Register::SI)), 1),
+            1 => (reg(op1), Operand::SegPtr(Register::DS,
+                Pointer::RegReg(Register::BX, Register::DI)), 1),
+            2 => (reg(op1), Operand::SegPtr(Register::DS,
+                Pointer::RegReg(Register::BP, Register::SI)), 1),
+            3 => (reg(op1), Operand::SegPtr(Register::DS,
+                Pointer::RegReg(Register::BP, Register::DI)), 1),
+            4 => (reg(op1), Operand::SegPtr(Register::DS, Pointer::Reg(Register::SI)), 1),
+            5 => (reg(op1), Operand::SegPtr(Register::DS, Pointer::Reg(Register::DI)), 1),
+            6 => (reg(op1), Operand::SegPtr(Register::DS,
+                Pointer::Disp16(get_word(&buffer, offset + 1))), 3),
+            7 => (reg(op1), Operand::SegPtr(Register::DS, Pointer::Reg(Register::BX)), 1),
             _ => panic!("Unknown r/m bits!")
             },
         1 => (reg(op1), match op2 {
-            0 => Operand::PtrRegRegDisp8(Register::BX, Register::SI, buffer[offset + 1]),
-            1 => Operand::PtrRegRegDisp8(Register::BX, Register::DI, buffer[offset + 1]),
-            2 => Operand::PtrRegRegDisp8(Register::BP, Register::SI, buffer[offset + 1]),
-            3 => Operand::PtrRegRegDisp8(Register::BP, Register::DI, buffer[offset + 1]),
-            4 => Operand::PtrRegDisp8(Register::SI, buffer[offset + 1]),
-            5 => Operand::PtrRegDisp8(Register::DI, buffer[offset + 1]),
-            6 => Operand::PtrRegDisp8(Register::BP, buffer[offset + 1]),
-            7 => Operand::PtrRegDisp8(Register::BX, buffer[offset + 1]),
+            0 => Operand::SegPtr(Register::DS,
+                Pointer::RegRegDisp8(Register::BX, Register::SI, buffer[offset + 1])),
+            1 => Operand::SegPtr(Register::DS,
+                Pointer::RegRegDisp8(Register::BX, Register::DI, buffer[offset + 1])),
+            2 => Operand::SegPtr(Register::DS,
+                Pointer::RegRegDisp8(Register::BP, Register::SI, buffer[offset + 1])),
+            3 => Operand::SegPtr(Register::DS,
+                Pointer::RegRegDisp8(Register::BP, Register::DI, buffer[offset + 1])),
+            4 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp8(Register::SI, buffer[offset + 1])),
+            5 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp8(Register::DI, buffer[offset + 1])),
+            6 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp8(Register::BP, buffer[offset + 1])),
+            7 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp8(Register::BX, buffer[offset + 1])),
             _ => panic!("Unknown r/m bits!")
             }, 2),
         2 => (reg(op1), match op2 {
-            0 => Operand::PtrRegRegDisp16(Register::BX, Register::SI, get_word(&buffer, offset + 1)),
-            1 => Operand::PtrRegRegDisp16(Register::BX, Register::DI, get_word(&buffer, offset + 1)),
-            2 => Operand::PtrRegRegDisp16(Register::BP, Register::SI, get_word(&buffer, offset + 1)),
-            3 => Operand::PtrRegRegDisp16(Register::BP, Register::DI, get_word(&buffer, offset + 1)),
-            4 => Operand::PtrRegDisp16(Register::SI, get_word(&buffer, offset + 1)),
-            5 => Operand::PtrRegDisp16(Register::DI, get_word(&buffer, offset + 1)),
-            6 => Operand::PtrRegDisp16(Register::BP, get_word(&buffer, offset + 1)),
-            7 => Operand::PtrRegDisp16(Register::BX, get_word(&buffer, offset + 1)),
+            0 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BX,
+                Register::SI, get_word(&buffer, offset + 1))),
+            1 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BX,
+                Register::DI, get_word(&buffer, offset + 1))),
+            2 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BP,
+                Register::SI, get_word(&buffer, offset + 1))),
+            3 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BP,
+                Register::DI, get_word(&buffer, offset + 1))),
+            4 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp16(Register::SI, get_word(&buffer, offset + 1))),
+            5 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp16(Register::DI, get_word(&buffer, offset + 1))),
+            6 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp16(Register::BP, get_word(&buffer, offset + 1))),
+            7 => Operand::SegPtr(Register::DS,
+                Pointer::RegDisp16(Register::BX, get_word(&buffer, offset + 1))),
             _ => panic!("Unknown r/m bits!")
             }, 3),
         3 => (reg(op1), reg(op2), 1),
