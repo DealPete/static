@@ -2,52 +2,55 @@ use graph;
 use defs::*;
 use analyse;
 
-pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a>, context: C) -> Program<'a> {
+pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a, C>) -> Program<'a, C> {
     let entry = program.entry_point();
-    let mut analysis = Analysis::new();
+    let mut analyser = analyse::Analyser::new();
 
     program.flow_graph.add_node_at(entry, true);
-    let mut loose_ends = walk_buffer(&mut program, &context, entry);
-    
-    while let Some(mut loose_end) = loose_ends.pop() {
-        if let Some(instruction) = program.instructions.get(&loose_end) {
+
+    walk_buffer(&mut program, entry);
+
+    loop {
+        let results = analyser.find_undiscovered_code(&program);
+
+        if results.len() == 0 {
+            break
+        }
+
+        for (state, from_index, to_index) in results {
+            let instruction = *program.instructions.get(&from_index)
+                .expect("from index points to non-existent instruction");
+
             match instruction.mnemonic {
                 Mnemonic::INT => {
-                    if context.does_int_always_end_program(loose_end, &program) {
+                    if program.context.does_int_always_end_program(state, instruction) {
                         continue;
                     } else {
-                        program.flow_graph.extend_node(loose_end, instruction.length);
-                        loose_end += instruction.length as usize;
+                        if program.flow_graph.extend_node(from_index, to_index) {
+                            walk_buffer(&mut program, to_index);
+                        }
                     }
                 },
                 Mnemonic::JMP => {
-                    match program.flow_graph.get_node_index_at(loose_end) {
+                    match program.flow_graph.get_node_index_at(from_index) {
                         Some(source_node) => {
-                            let destinations = analyse::find_indirect_branch_dests(
-                                loose_end, &program, &context); 
-                            for dest in destinations {
-                                add_jump_to_flow_graph(&mut program.flow_graph, source_node, dest);
-                                loose_ends.push(dest);
+                            if add_jump_to_flow_graph(&mut program.flow_graph, source_node, to_index) {
+                                walk_buffer(&mut program, to_index);
                             }
                         },
                         None => panic!("source of indirect jump not in flow graph!")
                     }
-                    continue;
                 },
-                _ => panic!("unimplemented loose end mnemonic.")
+                _ => panic!("unimplemented mnemonic for undiscovered code entry point.")
             }
         }
-
-        let mut new_loose_ends = walk_buffer(&mut program, &context, loose_end);
-        loose_ends.append(&mut new_loose_ends);
     }
 
     program
 }
 
-pub fn walk_buffer<'program, C: Context<'program>>(program: &mut Program, context: &C, entry: usize) -> Vec<usize> {
+pub fn walk_buffer<'program, C: Context<'program>>(program: &mut Program<'program, C>, entry: usize) {
     let mut offset;
-    let mut loose_ends = Vec::new();
     let mut jump_destinations : Vec<usize> = Vec::new();
     jump_destinations.push(entry);
 
@@ -67,24 +70,15 @@ pub fn walk_buffer<'program, C: Context<'program>>(program: &mut Program, contex
                     };
                     let next_offset = inst.length as usize + offset;
                     if inst.mnemonic == Mnemonic::INT {
-                        if context.does_int_end_program(&inst) {
-                            cont = false;
-                        }
-                        if context.is_int_loose_end(&inst) {
-                            loose_ends.push(offset);
+                        if program.context.can_int_end_program(&inst) {
                             cont = false;
                         }
                     }
                     if inst.mnemonic.is_branch()
-                        || inst.mnemonic == Mnemonic::RET
                         || next_offset >= program.initial_state.load_module.buffer.len() {
                         cont = false;
-                    }
-                    if inst.mnemonic.is_branch() {
                         if inst.is_rel_branch() {
                             jump_destinations.append(&mut handle_branch(program, node, offset, &inst));
-                        } else {
-                            loose_ends.push(offset);
                         }
                     } else {
                         if let Some(target_node) = program.flow_graph.get_node_index_at(next_offset) {
@@ -102,11 +96,9 @@ pub fn walk_buffer<'program, C: Context<'program>>(program: &mut Program, contex
             }
         }
     }
-
-    return loose_ends;
 }
 
-fn handle_branch(program: &mut Program, node: usize, offset: usize, inst: &Instruction) -> Vec<usize> {
+fn handle_branch<'program, C: Context<'program>>(program: &mut Program<'program, C>, node: usize, offset: usize, inst: &Instruction) -> Vec<usize> {
     let mut jump_destinations = Vec::new();
     let next_offset = offset + inst.length as usize;
 
@@ -116,8 +108,8 @@ fn handle_branch(program: &mut Program, node: usize, offset: usize, inst: &Instr
         _ => panic!("unimplemented operand for relative jump!")
     };
 
-    if let Some(dest) = add_jump_to_flow_graph(&mut program.flow_graph, node, target) {
-        jump_destinations.push(dest);
+    if add_jump_to_flow_graph(&mut program.flow_graph, node, target) {
+        jump_destinations.push(target);
     }
 
     if inst.mnemonic != Mnemonic::JMP && next_offset < program.initial_state.load_module.buffer.len() {
@@ -134,17 +126,17 @@ fn handle_branch(program: &mut Program, node: usize, offset: usize, inst: &Instr
     return jump_destinations;
 }
 
-fn add_jump_to_flow_graph(flow_graph: &mut graph::FlowGraph, source_node: usize, target_offset: usize) -> Option<usize> {
+fn add_jump_to_flow_graph(flow_graph: &mut graph::FlowGraph, source_node: usize, target_offset: usize) -> bool {
     match flow_graph.get_node_index_at(target_offset) {
         None => {
             let target_node = flow_graph.add_node_at(target_offset, true);
             flow_graph.add_edge(source_node, target_node);
-            Some(target_offset)
+            true
         }
         Some(next_node) => {
             flow_graph.split_node_at(next_node, target_offset);
             flow_graph.add_edge(source_node, next_node);
-            None
+            false
         }
     }
 }

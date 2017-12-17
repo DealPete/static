@@ -6,17 +6,17 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 #[derive(Clone)]
-pub struct State<'program> {
+pub struct State<'a> {
     pub cs : u16,
     pub ip : u16,
     regs : Registers,
     flags : Flags,
-    pub load_module : &'program LoadModule,
-    memory : HashMap<usize, Byte>
+    pub load_module : &'a LoadModule,
+    memory : HashMap<usize, Value>
 }
 
-impl<'program> State<'program> {
-    pub fn new(load_module: &'program LoadModule) -> State<'program> {
+impl<'a> State<'a> {
+    pub fn new(load_module: &'a LoadModule) -> State<'a> {
         State {
             cs : 0,
             ip : 0,
@@ -31,7 +31,7 @@ impl<'program> State<'program> {
         16 * self.cs as usize + self.ip as usize
     }
 
-    pub fn union(self, state: State<'program>) -> State<'program> {
+    pub fn union(self, state: State<'a>) -> State<'a> {
         if self.cs != state.cs || self.ip != state.ip {
             panic!("Unifying states with different cs/ip unimplemented");
         };
@@ -55,10 +55,10 @@ impl<'program> State<'program> {
     }
 
     pub fn is_subset(&self, state: &State) -> bool {
-        for (offset, byte1) in self.memory.iter() {
+        for (offset, value1) in self.memory.iter() {
             match state.memory.get(&offset) {
                 None => return false,
-                Some(ref byte2) => if !byte1.is_subset(byte2) {
+                Some(ref value2) => if !value1.is_subset(value2) {
                     return false;
                 }
             }
@@ -103,7 +103,7 @@ impl<'program> State<'program> {
         }
     }
 
-    pub fn set_reg8(self, reg: Register, value: Byte) -> State<'program> {
+    pub fn set_reg8(self, reg: Register, value: Byte) -> State<'a> {
         State {
             regs: match reg {
                 Register::AL => Registers {
@@ -144,7 +144,7 @@ impl<'program> State<'program> {
         }
     }
 
-    pub fn set_reg16(self, reg: Register, value: Word) -> State<'program> {
+    pub fn set_reg16(self, reg: Register, value: Word) -> State<'a> {
         State {
             regs: match reg {
                 Register::AX => Registers { ax: value, .. self.regs },
@@ -165,11 +165,22 @@ impl<'program> State<'program> {
         }
     }
 
+    pub fn get_flag(&self, flag: Flag) -> Bit {
+        self.flags.get(flag)
+    }
+
     pub fn get_flags(&self) -> Flags {
         self.flags
     }
 
-    pub fn set_flags(self, flags: Flags) -> State<'program> {
+    pub fn set_flag(self, flag: Flag, bit: Bit) -> State<'a> {
+        State {
+            flags: self.flags.set(flag, bit),
+            .. self
+        }
+    }
+
+    pub fn set_flags(self, flags: Flags) -> State<'a> {
         State {
             flags: flags,
             .. self
@@ -237,14 +248,14 @@ impl<'program> State<'program> {
         }
     }
 
-    pub fn set_value(self, operand: Operand, value: Value) -> State<'program> {
+    pub fn set_value(self, operand: Operand, value: Value) -> State<'a> {
         match value {
             Value::Word(word) => self.set_word(operand, word),
             Value::Byte(byte) => self.set_byte(operand, byte)
         }
     }
 
-    pub fn set_word(self, operand: Operand, word: Word) -> State<'program> {
+    pub fn set_word(self, operand: Operand, word: Word) -> State<'a> {
         match operand {
             Operand::Register16(target_reg) =>
                 self.set_reg16(target_reg, word),
@@ -270,14 +281,21 @@ impl<'program> State<'program> {
         }
     }
 
-    pub fn clear_value(self, operand: Operand) -> State<'program> {
+    pub fn clear_value(self, operand: Operand) -> State<'a> {
         match self.get_value(operand) {
             Value::Word(_) => self.set_word(operand, Word::new(0)),
             Value::Byte(_) => self.set_byte(operand, Byte::new(0))
         }
     }
 
-    pub fn set_byte(self, operand: Operand, byte: Byte) -> State<'program> {
+    pub fn clear_flag(self, flag: Flag) -> State<'a> {
+        State {
+            flags: self.flags.set(flag, Bit::False),
+            .. self
+        }
+    }
+
+    pub fn set_byte(self, operand: Operand, byte: Byte) -> State<'a> {
         match operand {
             Operand::Register8(target_reg) =>
                 self.set_reg8(target_reg, byte),
@@ -308,7 +326,10 @@ impl<'program> State<'program> {
             for offset in offsets.iter() {
                 let location = 16*(segment as usize) + *offset as usize;
                 byte = byte.union(match self.memory.get(&location) {
-                    Some(new_byte) => new_byte.clone(),
+                    Some(value) => match value {
+                        &Value::Byte(ref new_byte) => new_byte.clone(),
+                        &Value::Word(_) => panic!("Can't read byte from word in memory.")
+                    },
                     None => Byte::new(self.load_module.buffer[
                         location - 16*(self.load_module.memory_segment as usize)
                     ])
@@ -319,25 +340,31 @@ impl<'program> State<'program> {
     }
 
     fn read_memory_word(&self, segments: HashSet<u16>, offsets: HashSet<u16>) -> Word {
-        self.read_memory_byte(segments.clone(), offsets.clone()).combine(
-            self.read_memory_byte(segments,
-                offsets.iter().map(|offset| {offset + 1}).collect()))
+        let mut word = Word::Int(HashSet::new());
+        for segment in segments {
+            for offset in offsets.iter() {
+                let location = 16*(segment as usize) + *offset as usize;
+                word = word.union(match self.memory.get(&location) {
+                    Some(value) => match value {
+                        &Value::Byte(_) => panic!("Can't read word from byte in memory."),
+                        &Value::Word(ref new_word) => new_word.clone(),
+                    },
+                    None => {
+                        let offset = location - 16*(self.load_module.memory_segment as usize);
+                        Word::new(get_word(&self.load_module.buffer, offset))
+                    }
+                });
+            }
+        }
+        word
     }
 
-    fn write_memory(self, segments: HashSet<u16>, offsets: HashSet<u16>, value: Value) -> State<'program> {
+    fn write_memory(self, segments: HashSet<u16>, offsets: HashSet<u16>, value: Value) -> State<'a> {
         let mut new_memory = self.memory.clone();
         for segment in segments {
             for offset in offsets.iter() {
                 let location = 16*(segment as usize) + *offset as usize;
-                match value {
-                    Value::Word(ref word) => {
-                        new_memory.insert(location, word.clone().split_low());
-                        new_memory.insert(location + 1, word.clone().split_high());
-                    },
-                    Value::Byte(ref byte) => {
-                        new_memory.insert(location, byte.clone());
-                    }
-                }
+                new_memory.insert(location, value.clone());
             }
         };
         State {
@@ -368,7 +395,7 @@ impl<'program> State<'program> {
     }
 }
 
-impl<'program> fmt::Display for State<'program> {
+impl<'a> fmt::Display for State<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let regs = &self.regs;
         let line1 = format!("AX={}  BX={}  CX={}  DX={}  SP={}  BP={}  SI={}  DI={}",
@@ -448,27 +475,53 @@ impl Registers {
 
 #[derive(Copy, Clone, PartialEq)]
 pub struct Flags {
-    pub carry : Flag,
-    pub parity : Flag,
-    pub adjust : Flag,
-    pub zero : Flag,
-    pub sign : Flag,
-    pub int : Flag,
-    pub dir : Flag,
-    pub overflow : Flag
+    carry: Bit,
+    parity: Bit,
+    adjust: Bit,
+    zero: Bit,
+    sign: Bit,
+    interrupt: Bit,
+    direction: Bit,
+    overflow: Bit
 }
 
 impl Flags {
     pub fn new() -> Flags {
         Flags {
-            carry: Flag::Undefined,
-            parity: Flag::Undefined,
-            adjust: Flag::Undefined,
-            zero: Flag::Undefined,
-            sign: Flag::Undefined,
-            int: Flag::Undefined,
-            dir: Flag::Undefined,
-            overflow: Flag::Undefined,
+            carry: Bit::Undefined,
+            parity: Bit::Undefined,
+            adjust: Bit::Undefined,
+            zero: Bit::Undefined,
+            sign: Bit::Undefined,
+            interrupt: Bit::Undefined,
+            direction: Bit::Undefined,
+            overflow: Bit::Undefined
+        }
+    }
+
+    pub fn get(&self, flag: Flag) -> Bit {
+        match flag {
+            Flag::Carry => self.carry,
+            Flag::Parity => self.parity,
+            Flag::Adjust => self.adjust,
+            Flag::Zero => self.zero,
+            Flag::Sign => self.sign,
+            Flag::Interrupt => self.interrupt,
+            Flag::Direction => self.direction,
+            Flag::Overflow => self.overflow
+        }
+    }
+
+    pub fn set(self, flag: Flag, bit: Bit) -> Flags {
+        match flag {
+            Flag::Carry => Flags { carry: bit, .. self },
+            Flag::Parity => Flags { parity: bit, .. self },
+            Flag::Adjust => Flags { adjust: bit, .. self },
+            Flag::Zero => Flags { zero: bit, .. self },
+            Flag::Sign => Flags { sign: bit, .. self },
+            Flag::Interrupt => Flags { interrupt: bit, .. self },
+            Flag::Direction => Flags { direction: bit, .. self },
+            Flag::Overflow => Flags { overflow: bit, .. self }
         }
     }
 
@@ -479,8 +532,8 @@ impl Flags {
             adjust: self.adjust.union(flags.adjust),
             zero: self.zero.union(flags.zero),
             sign: self.sign.union(flags.sign),
-            int: self.int.union(flags.int),
-            dir: self.dir.union(flags.dir),
+            interrupt: self.interrupt.union(flags.interrupt),
+            direction: self.direction.union(flags.direction),
             overflow: self.overflow.union(flags.overflow),
         }
     }
@@ -491,74 +544,55 @@ impl Flags {
         self.adjust.is_subset(flags.adjust) &&
         self.zero.is_subset(flags.zero) &&
         self.sign.is_subset(flags.sign) &&
-        self.int.is_subset(flags.int) &&
-        self.dir.is_subset(flags.dir) &&
+        self.interrupt.is_subset(flags.interrupt) &&
+        self.direction.is_subset(flags.direction) &&
         self.overflow.is_subset(flags.overflow)
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone)]
 pub enum Flag {
-    Undefined,
-    True,
-    False,
-    TrueAndFalse
+    Carry,
+    Parity,
+    Adjust,
+    Zero,
+    Sign,
+    Interrupt,
+    Direction,
+    Overflow
 }
 
-impl Flag {
-    pub fn union(self, flag: Flag) -> Flag {
-        match self {
-            Flag::Undefined => flag,
-            Flag::True => match flag {
-                Flag::Undefined => Flag::True,
-                Flag::False => Flag::TrueAndFalse,
-                _ => flag
-            },
-            Flag::False => match flag {
-                Flag::Undefined => Flag::False,
-                Flag::True => Flag::TrueAndFalse,
-                _ => flag
-            },
-            Flag::TrueAndFalse => Flag::TrueAndFalse
-        }
-    }
-
-    fn is_subset(&self, flag: Flag) -> bool {
-        match *self {
-            Flag::Undefined => match flag {
-                Flag::Undefined | Flag::TrueAndFalse => true,
-                _ => false
-            },
-            Flag::TrueAndFalse => flag == Flag::TrueAndFalse,
-            _ => *self == flag
-        }
-    }
-
-    pub fn add_true(&mut self) {
-        *self = match *self {
-            Flag::Undefined | Flag::True =>
-                Flag::True,
-            Flag::False | Flag::TrueAndFalse
-                => Flag::TrueAndFalse
-        }
-    }
-
-    pub fn add_false(&mut self) {
-        *self = match *self {
-            Flag::Undefined | Flag::False =>
-                Flag::False,
-            Flag::True | Flag::TrueAndFalse
-                => Flag::TrueAndFalse
-        }
-    }
-}
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Value {
     Word(Word),
     Byte(Byte)
 }
 
-#[derive(Clone, PartialEq)]
+impl Value {
+    pub fn is_subset(&self, value: &Value) -> bool {
+        match self {
+            &Value::Word(ref word1) => match value {
+                &Value::Word(ref word2) => word1.is_subset(&word2),
+                _ => panic!("can't compare words and bytes.")
+            },
+            &Value::Byte(ref byte1) => match value {
+                &Value::Byte(ref byte2) => byte1.is_subset(&byte2),
+                _ => panic!("can't compore bytes and words.")
+            }
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Value::Byte(ref byte) => write!(f, "{}", byte),
+            &Value::Word(ref word) => write!(f, "{}", word)
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum Word {
     Undefined,
     AnyValue,
@@ -687,12 +721,10 @@ impl Add<Word> for Word {
         };
         match word1 {
             Word::Undefined => Word::Undefined,
-            Word::AnyValue =>
-                if word2 == Word::Undefined {
-                    Word::Undefined
-                } else {
-                    Word::AnyValue
-                },
+            Word::AnyValue => match word2 {
+                    Word::Undefined => Word::Undefined,
+                    _ => Word::AnyValue
+            },
             Word::Int(set1) => match word2 {
                 Word::Undefined => Word::Undefined,
                 Word::AnyValue => Word::AnyValue,
@@ -712,7 +744,7 @@ impl Add<Word> for Word {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Byte {
     Undefined,
     AnyValue,
@@ -816,6 +848,73 @@ impl fmt::Display for Byte {
                     String::from("{}")
                 },
         })
+    }
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum Bit {
+    Undefined,
+    True,
+    False,
+    TrueAndFalse
+}
+
+impl Bit {
+    pub fn new() -> Bit {
+        Bit::Undefined
+    }
+
+    pub fn union(self, bit: Bit) -> Bit {
+        match self {
+            Bit::Undefined => bit,
+            Bit::True => match bit {
+                Bit::Undefined => Bit::True,
+                Bit::False => Bit::TrueAndFalse,
+                _ => bit
+            },
+            Bit::False => match bit {
+                Bit::Undefined => Bit::False,
+                Bit::True => Bit::TrueAndFalse,
+                _ => bit
+            },
+            Bit::TrueAndFalse => Bit::TrueAndFalse
+        }
+    }
+
+    fn is_subset(&self, bit: Bit) -> bool {
+        match *self {
+            Bit::Undefined => match bit {
+                Bit::Undefined | Bit::TrueAndFalse => true,
+                _ => false
+            },
+            Bit::TrueAndFalse => bit == Bit::TrueAndFalse,
+            _ => *self == bit
+        }
+    }
+
+    pub fn has_truth_value(&self, truth_value: bool) -> bool {
+        match truth_value {
+            true => *self == Bit::True || *self == Bit::TrueAndFalse,
+            false => *self == Bit::False || *self == Bit::TrueAndFalse
+        }
+    }
+
+    pub fn add_true(&mut self) {
+        *self = match *self {
+            Bit::Undefined | Bit::True =>
+                Bit::True,
+            Bit::False | Bit::TrueAndFalse
+                => Bit::TrueAndFalse
+        }
+    }
+
+    pub fn add_false(&mut self) {
+        *self = match *self {
+            Bit::Undefined | Bit::False =>
+                Bit::False,
+            Bit::True | Bit::TrueAndFalse
+                => Bit::TrueAndFalse
+        }
     }
 }
 

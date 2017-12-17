@@ -3,13 +3,14 @@ use graph;
 use std::fmt;
 use std::collections::HashMap;
 
-pub struct Program<'program> {
-    pub initial_state: State<'program>,
+pub struct Program<'a, C: Context<'a>> {
+    pub initial_state: State<'a>,
     pub flow_graph: graph::FlowGraph,
-    pub instructions: HashMap<usize, Instruction>
+    pub instructions: HashMap<usize, Instruction>,
+    pub context: C
 }
 
-impl<'program> Program<'program> {
+impl<'a, C: Context<'a>> Program<'a, C> {
     pub fn entry_point(&self) -> usize {
         16 * self.initial_state.cs as usize
             + self.initial_state.ip as usize
@@ -20,12 +21,13 @@ impl<'program> Program<'program> {
         16 * self.initial_state.load_module.memory_segment as usize + offset
     }
 
-    pub fn get_inst_offset(&self, address: usize) -> usize {
+    pub fn next_inst_offset(&self, state: &State<'a>) -> usize {
+        let address = state.next_inst_address();
         address - 16 * self.initial_state.load_module.memory_segment as usize
     }
 }
 
-impl<'program> fmt::Display for Program<'program> {
+impl<'a, C: Context<'a>> fmt::Display for Program<'a, C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::new();
         for i in 0..self.initial_state.load_module.buffer.len() {
@@ -64,9 +66,8 @@ impl<'program> fmt::Display for Program<'program> {
 
 pub trait Context<'state> {
     fn simulate_int(&self, state: State<'state>, inst:&Instruction) -> State<'state>;
-    fn does_int_end_program(&self, instruction: &Instruction) -> bool;
-    fn does_int_always_end_program(&self, inst_index: usize, program: &Program) -> bool;
-    fn is_int_loose_end(&self, instruction: &Instruction) -> bool;
+    fn can_int_end_program(&self, instruction: &Instruction) -> bool;
+    fn does_int_always_end_program(&self, state: State, instruction: Instruction) -> bool;
 }
 
 pub struct LoadModule {
@@ -75,6 +76,7 @@ pub struct LoadModule {
     pub buffer: Vec<u8>
 }
 
+#[derive(Copy, Clone)]
 pub struct Instruction {
     pub rep_prefix: Option<Mnemonic>,
     pub mnemonic: Mnemonic,
@@ -203,7 +205,7 @@ impl Mnemonic {
             Mnemonic::JS | Mnemonic::JNS | Mnemonic::JP | Mnemonic::JNP |
             Mnemonic::JL | Mnemonic::JNL | Mnemonic::JNLE | Mnemonic::JCXZ |
             Mnemonic::LOOP | Mnemonic::LOOPNZ | Mnemonic::LOOPZ |
-            Mnemonic::CALL => true,
+            Mnemonic::CALL | Mnemonic::RET => true,
             _ => false
         }
     }

@@ -1,140 +1,164 @@
 use defs::*;
 use state::*;
 use sim;
-use graph;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
-pub enum SimResult<'program> {
-    State(State<'program>),
-    Branch(Vec<State<'program>>)
+pub struct Analyser<'a> {
+    node_state: HashMap<usize, State<'a>>
 }
 
-fn simulate_program_up_to<'a, 'program, C: Context<'program>>(target_offset: usize, program: &'a Program<'program>, context: &C) -> State<'program> {
-    let mut states: Vec<State> = Vec::new();
-    let mut final_states = Vec::new();
-    states.push(program.initial_state.clone());
+enum SimResult<'a> {
+    State(State<'a>),
+    Branch(Vec<State<'a>>)
+}
 
-    while let Some(state) = states.pop() {
-//        println!("{}", state);
-        let instruction_offset = program.get_inst_offset(state.next_inst_address());
-        if instruction_offset == target_offset {
-            final_states.push(state);
-            continue;
-        }
-
-        let instruction = program.instructions.get(&instruction_offset)
-            .expect(format!("no instruction at 0x{:x}", instruction_offset).as_str());
-
-//        println!("\nInstruction: {}", instruction);
-        match simulate_instruction(state, context, instruction) {
-            SimResult::State(next_state) => states.push(next_state),
-            SimResult::Branch(ref mut new_states) => states.append(new_states)
+impl<'a> Analyser<'a> {
+    pub fn new() -> Analyser<'a> {
+        Analyser {
+            node_state: HashMap::new()
         }
     }
 
-    match final_states.pop() {
-        None => panic!("no states reached target instruction"),
-        Some(mut final_state) => {
-            while let Some(state) = final_states.pop() {
-                final_state = final_state.union(state);
+    pub fn find_undiscovered_code<C: Context<'a>>(&mut self, program: &Program<'a, C>) -> Vec<(State<'a>, usize, usize)> {
+        let mut results: Vec<(State<'a>, usize, usize)> = Vec::new();
+        let mut states: Vec<State<'a>> = Vec::new();
+        states.push(program.initial_state.clone());
+        let entry_node_index = program.flow_graph.get_node_index_at(program.entry_point())
+            .expect("program entry point not in node graph!");
+        self.node_state.insert(entry_node_index, program.initial_state.clone());
+
+        while let Some(state) = states.pop() {
+            let inst_index = program.next_inst_offset(&state);
+            match self.simulate_next_instruction(state, program) {
+                SimResult::State(next_state) => states.push(next_state),
+                SimResult::Branch(new_states) => {
+                    for new_state in new_states {
+                        let new_inst_index = program.next_inst_offset(&new_state);
+                        match program.flow_graph.get_node_index_at(new_inst_index) {
+                            None => results.push((new_state.clone(), inst_index, new_inst_index)),
+                            Some(node_index) => {
+                                let mut next_state = new_state.clone();
+                                if let Some(node_state) = self.node_state.get(&node_index) {
+                                    if next_state.is_subset(node_state) {
+                                        continue;
+                                    } else {
+                                        next_state = new_state.clone().union(node_state.clone());
+                                    }
+                                }
+                                self.node_state.insert(node_index, next_state.clone());
+                                states.push(next_state);
+                            }
+                        }
+                    }
+                }
             }
-
-            println!("{}", final_state);
-            final_state
         }
-    }
-}
 
-fn branch<'program>(mut state: State<'program>, instruction: &Instruction) -> Vec<State<'program>> {
-    let mut new_states = Vec::new();
-
-    let offsets = match instruction.op1 {
-        Some(Operand::Imm8(rel)) => vec!(rel as i16),
-        Some(Operand::Imm16(rel)) => vec!(rel),
-        _ => panic!("unimplemented operand for jump!")
-    };
-
-    for offset in offsets {
-        let mut new_state = state.clone();
-        new_state.ip = new_state.ip.wrapping_add(instruction.length as u16);
-        if instruction.mnemonic == Mnemonic::CALL {
-            let return_address = Word::new(new_state.ip);
-            new_state = sim::push_word(new_state, return_address);
-        }
-        new_state.ip = new_state.ip.wrapping_add(offset as u16);
-        new_states.push(new_state);
+        return results;
     }
 
-    match instruction.mnemonic {
-        Mnemonic::CALL | Mnemonic::JMP => new_states,
-        _ => {
+    fn simulate_next_instruction<C: Context<'a>>(&self, mut state: State<'a>, program: &Program<'a, C>) -> SimResult<'a> {
+
+        let instruction =
+            program.instructions.get(&program.next_inst_offset(&state)) 
+            .expect("tried to simulate instruction not found in program.");
+
+            println!("{}\n", state);
+            println!("{}", instruction);
+        if instruction.mnemonic.is_branch() {
+            SimResult::Branch(self.branch(state, instruction))
+        } else if instruction.mnemonic == Mnemonic::INT {
+            state.ip = state.ip.wrapping_add(instruction.length as u16);
+            SimResult::State(program.context.simulate_int(state, instruction))
+        } else {
+            SimResult::State(sim::simulate_instruction(state, &program.context, instruction))
+        }
+    }
+
+    fn branch(&self, mut state: State<'a>, instruction: &Instruction) -> Vec<State<'a>> {
+        let mut new_states = Vec::new();
+
+        if instruction.mnemonic == Mnemonic::RET {
+            let (state, word) = sim::pop_word(state);
+            match word {
+                Word::Undefined => panic!("can't jump to undefined location."),
+                Word::AnyValue => panic!("can't jump to unlimited location."),
+                Word::Int(ref set) => {
+                    for offset in set {
+                        let mut new_state = state.clone();
+                        new_state.ip = *offset;
+                        new_states.push(new_state);
+                    }
+                },
+                _ => panic!("Unsupported return type.")
+            };
+            return new_states;
+        }
+
+        let offsets: Vec<i16> = if instruction.op1 == None {
+            Vec::new()
+        } else {
+            match state.get_value(instruction.unpack_op1()) {
+                Value::Word(Word::Undefined) | Value::Byte(Byte::Undefined) =>
+                    panic!("can't jump to undefined location."),
+                Value::Word(Word::AnyValue) | Value::Byte(Byte::AnyValue) =>
+                    panic!("can't jump to unlimited location."),
+                Value::Word(Word::Int(set)) => {
+                    let mut vec = Vec::new();
+                    for word in set {
+                        vec.push(word as i16);
+                    };
+                    vec
+                },
+                Value::Byte(Byte::Int(set)) => {
+                    let mut vec = Vec::new();
+                    for byte in set {
+                        vec.push(byte as i16);
+                    };
+                    vec
+                },
+                _ => panic!("Unsupport jump offset type.")
+            }
+        };
+
+        let mut cont = false;
+        let mut jump = false;
+
+        if instruction.mnemonic == Mnemonic::CALL
+            || instruction.mnemonic == Mnemonic::JMP {
+                jump = true;
+        } else {
+            let (flag_to_check, truth_value) = match instruction.mnemonic {
+                Mnemonic::JZ => (Flag::Zero, true),
+                _ => panic!("jump opeand not yet implemented.")
+            };
+
+            match state.get_flag(flag_to_check) {
+                Bit::Undefined => panic!("conditional jump for undefined flag."),
+                Bit::True => jump = true,
+                Bit::False => cont = true,
+                Bit::TrueAndFalse => { jump = true; cont = true }
+            }
+        }
+
+        if jump {
+            for offset in offsets {
+                let mut new_state = state.clone();
+                new_state.ip = new_state.ip.wrapping_add(instruction.length as u16);
+                if instruction.mnemonic == Mnemonic::CALL {
+                    let return_address = Word::new(new_state.ip);
+                    new_state = sim::push_word(new_state, return_address);
+                }
+                new_state.ip = new_state.ip.wrapping_add(offset as u16);
+                new_states.push(new_state);
+            }
+        }
+
+        if cont {
             state.ip = state.ip.wrapping_add(instruction.length as u16);
             new_states.push(state);
-            new_states
         }
-    }
-}
 
-fn simulate_instruction<'program, C: Context<'program>>(mut state: State<'program>, context: &C, instruction: &Instruction) -> SimResult<'program> {
-    if instruction.mnemonic.is_branch() {
-        SimResult::Branch(branch(state, instruction))
-    } else if instruction.mnemonic == Mnemonic::INT {
-        state.ip = state.ip.wrapping_add(instruction.length as u16);
-        SimResult::State(context.simulate_int(state, instruction))
-    } else {
-        SimResult::State(sim::simulate_instruction(state, context, instruction))
-    }
-}
-
-pub fn find_indirect_branch_dests<'a, 'program, C: Context<'program>>(offset: usize, program: &'a Program<'program>, context: &C) -> Vec<usize> {
-    match program.instructions.get(&offset) {
-        None => panic!("asked to simulate program from undiscovered instruction."),
-        Some(instruction) => {
-            let state = simulate_program_up_to(offset, program, context);
-            println!("{}", state.get_combined_word(instruction.unpack_op1()));
-            match state.get_combined_word(instruction.unpack_op1()) {
-                Word::Undefined => panic!("branching to undefined instruction!"),
-                Word::AnyValue => panic!("can't branch to any value"),
-                Word::Int(set) => {
-                    let mut dests = Vec::new();
-                    for dest in set {
-                        dests.push(program.get_inst_offset(
-                            16*(state.cs as usize) + dest as usize));
-                    }
-                    dests
-                },
-                _ => panic!("shouldn't be here")
-            }
-        }
-    }
-}
-
-fn simulate_node_up_to<'program, C: Context<'program>>(node: &graph::Node, offset: usize, program: &'program Program, context: &C) -> State<'program> {
-    let mut next_offset = node.insts[0];
-    let mut state = State::new(&program.initial_state.load_module);
-    state.cs = 0;
-    state.ip = next_offset as u16;
-
-    while next_offset != offset {
-        let inst = &program.instructions.get(&next_offset)
-            .expect(format!("No instruction at 0x{:x}.", next_offset).as_str());
-        state = sim::simulate_instruction(state, context, inst);
-        next_offset += inst.length as usize;
-    }
-
-    state
-}
-
-pub fn reg8_at_is_always_in<'program, C: Context<'program>>(reg: Register, inst_index: usize, values: HashSet<u8>, program: &'program Program<'program>, context: &C) -> bool {
-    match program.flow_graph.get_node_at(inst_index) {
-        None => panic!("Asked to search from instruction not in graph!"),
-        Some(node) => {
-            let state = simulate_node_up_to(node, inst_index, program, context);
-            match state.get_reg8(reg) {
-                Byte::Undefined => panic!("Couldn't determine value of {:?} at 0x{:x}.", reg, inst_index),
-                Byte::AnyValue => false,
-                Byte::Int(ref reg_values) => reg_values.is_subset(&values)
-            }
-        }
+        new_states
     }
 }

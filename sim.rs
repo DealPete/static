@@ -9,11 +9,14 @@ pub fn simulate_instruction<'program, C: Context<'program>>(mut state: State<'pr
         | Mnemonic::OR | Mnemonic::SHL
             => simulate_binary_operator(state, inst),
         Mnemonic::XOR => simulate_xor(state, inst),
+        
+        Mnemonic::CLD => state.clear_flag(Flag::Direction),
         Mnemonic::CMP => simulate_cmp(state, inst),
         Mnemonic::IN => simulate_in(state, inst),
         Mnemonic::OUT => state,
         Mnemonic::INT => context.simulate_int(state, inst),
         Mnemonic::MOV => simulate_mov(state, inst),
+        Mnemonic::NOP => state,
         Mnemonic::POP => simulate_pop(state, inst),
         Mnemonic::PUSH => simulate_push(state, inst),
         Mnemonic::RET => simulate_ret(state),
@@ -30,9 +33,7 @@ fn simulate_binary_operator<'program>(state: State<'program>, inst: &Instruction
 
 fn simulate_xor<'program>(state: State<'program>, inst: &Instruction) -> State<'program> {
     if inst.op1 == inst.op2 {
-        let mut new_flags = state.get_flags();
-        new_flags.zero = Flag::True;
-        state.clear_value(inst.unpack_op1()).set_flags(new_flags)
+        state.clear_value(inst.unpack_op1()).set_flag(Flag::Zero, Bit::True)
     } else {
         simulate_binary_operator(state, inst)
     }
@@ -87,7 +88,7 @@ fn simulate_ret(state: State) -> State {
 }
 
 
-fn pop_word(state: State) -> (State, Word) {
+pub fn pop_word(state: State) -> (State, Word) {
     let pointer = Operand::SegPtr(Register::SS, Pointer::Reg(Register::SP));
     let word = state.get_word(pointer);
     let (new_sp, _) =
@@ -135,26 +136,24 @@ pub fn apply_to_words(wordl: Word, wordr: Word, op: Mnemonic) -> (Word, Flags) {
     match word1 {
         Word::Undefined => (Word::Undefined, flags),
         Word::AnyValue =>
-            if word2 == Word::Undefined {
-                (Word::Undefined, flags)
-            } else {
-                (Word::AnyValue, Flags {
-                    sign: Flag::TrueAndFalse,
-                    zero: Flag::TrueAndFalse,
-                    overflow: Flag::TrueAndFalse,
-                    .. flags
-                })
+            match word2 {
+                Word::Undefined => (Word::Undefined, flags),
+                _ => (Word::AnyValue, Flags::new()
+                    .set(Flag::Sign, Bit::TrueAndFalse)
+                    .set(Flag::Zero, Bit::TrueAndFalse)
+                    .set(Flag::Overflow, Bit::TrueAndFalse)
+                )
             },
         Word::Int(set1) => match word2 {
             Word::Undefined => (Word::Undefined, flags),
-            Word::AnyValue => (Word::AnyValue, Flags {
-                sign: Flag::TrueAndFalse,
-                zero: Flag::TrueAndFalse,
-                overflow: Flag::TrueAndFalse,
-                .. flags
-            }),
+            Word::AnyValue => (Word::AnyValue, Flags::new()
+                .set(Flag::Sign, Bit::TrueAndFalse)
+                .set(Flag::Zero, Bit::TrueAndFalse)
+                .set(Flag::Overflow, Bit::TrueAndFalse)
+            ),
             Word::Int(set2) => {
                 let mut set = HashSet::new();
+                let mut zero_flag = Bit::new();
                 for word1 in set1 {
                     for word2 in set2.clone() {
                         let (result, new_flags) =
@@ -162,13 +161,13 @@ pub fn apply_to_words(wordl: Word, wordr: Word, op: Mnemonic) -> (Word, Flags) {
                         set.insert(result);
                         flags = flags.union(new_flags);
                         if result == 0 {
-                            flags.zero.add_true();
+                            zero_flag.add_true();
                         } else {
-                            flags.zero.add_false();
+                            zero_flag.add_false();
                         }
                     }
                 };
-                (Word::Int(set), flags)
+                (Word::Int(set), flags.set(Flag::Zero, zero_flag))
             },
             _ => panic!("shouldn't be here")
         },
@@ -181,26 +180,24 @@ fn apply_to_bytes(op1: Byte, op2: Byte, op: Mnemonic) -> (Byte, Flags) {
     match op1 {
         Byte::Undefined => (Byte::Undefined, flags),
         Byte::AnyValue =>
-            if op2 == Byte::Undefined {
-                (Byte::Undefined, flags)
-            } else {
-                (Byte::AnyValue, Flags {
-                    sign: Flag::TrueAndFalse,
-                    zero: Flag::TrueAndFalse,
-                    overflow: Flag::TrueAndFalse,
-                    .. flags
-                })
+            match op2 {
+                Byte::Undefined => (Byte::Undefined, flags),
+                _ => (Byte::AnyValue, Flags::new()
+                    .set(Flag::Sign, Bit::TrueAndFalse)
+                    .set(Flag::Zero, Bit::TrueAndFalse)
+                    .set(Flag::Overflow, Bit::TrueAndFalse)
+                )
             },
         Byte::Int(set1) => match op2 {
             Byte::Undefined => (Byte::Undefined, flags),
-            Byte::AnyValue => (Byte::AnyValue, Flags {
-                sign: Flag::TrueAndFalse,
-                zero: Flag::TrueAndFalse,
-                overflow: Flag::TrueAndFalse,
-                .. flags
-            }),
+            Byte::AnyValue => (Byte::AnyValue, Flags::new()
+                .set(Flag::Sign, Bit::TrueAndFalse)
+                .set(Flag::Zero, Bit::TrueAndFalse)
+                .set(Flag::Overflow, Bit::TrueAndFalse)
+            ),
             Byte::Int(set2) => {
                 let mut set = HashSet::new();
+                let mut zero_flag = Bit::new();
                 for byte1 in set1 {
                     for byte2 in set2.clone() {
                         let (result, new_flags) =
@@ -208,91 +205,85 @@ fn apply_to_bytes(op1: Byte, op2: Byte, op: Mnemonic) -> (Byte, Flags) {
                         flags = flags.union(new_flags);
                         set.insert(result);
                         if result == 0 {
-                            flags.zero.add_true();
+                            zero_flag.add_true();
                         } else {
-                            flags.zero.add_false();
+                            zero_flag.add_false();
                         }
                     }
                 };
-                (Byte::Int(set), flags)
+                (Byte::Int(set), flags.set(Flag::Zero, zero_flag))
             }
         }
     }
 }
 
 fn apply_to_u16s(word1: u16, word2: u16, op: Mnemonic) -> (u16, Flags) {
-    let mut flags = Flags::new();
     match op {
         Mnemonic::ADD => {
-            if 0xffff - word1 < word2 {
-                flags.overflow.add_true();
-                flags.carry.add_true();
+            (word1.wrapping_add(word2), if 0xffff - word1 < word2 {
+                Flags::new().set(Flag::Overflow, Bit::True)
+                    .set(Flag::Carry, Bit::True)
             } else {
-                flags.overflow.add_false();
-                flags.carry.add_false();
-            }
-            (word1.wrapping_add(word2), flags)
+                Flags::new().set(Flag::Overflow, Bit::False)
+                    .set(Flag::Carry, Bit::False)
+            })
         },
         Mnemonic::SUB => {
-            if word1 < word2 {
-                flags.overflow.add_true();
-                flags.carry.add_true();
+            (word1.wrapping_sub(word2), if word1 < word2 {
+                Flags::new().set(Flag::Overflow, Bit::True)
+                    .set(Flag::Carry, Bit::True)
             } else {
-                flags.overflow.add_false();
-                flags.carry.add_false();
-            }
-            (word1.wrapping_sub(word2), flags)
+                Flags::new().set(Flag::Overflow, Bit::False)
+                    .set(Flag::Carry, Bit::False)
+            })
         },
         Mnemonic::AND => {
-            (word1 & word2, flags)
+            (word1 & word2, Flags::new())
         },
         Mnemonic::OR => {
-            (word1 | word2, flags)
+            (word1 | word2, Flags::new())
         },
         Mnemonic::XOR => {
-            (word1 ^ word2, flags)
+            (word1 ^ word2, Flags::new())
         },
         Mnemonic::SHL => {
-            (word1 << word2, flags)
+            (word1 << word2, Flags::new())
         },
         _ => panic!("Operation {:?} not implemented for words.", op)
     }
 }
 
 fn apply_to_u8s(byte1: u8, byte2: u8, op: Mnemonic) -> (u8, Flags) {
-    let mut flags = Flags::new();
     match op {
         Mnemonic::ADD => {
-            if 0xff - byte1 < byte2 {
-                flags.overflow.add_true();
-                flags.carry.add_true();
+            (byte1.wrapping_add(byte2), if 0xff - byte1 < byte2 {
+                Flags::new().set(Flag::Overflow, Bit::True)
+                    .set(Flag::Carry, Bit::True)
             } else {
-                flags.overflow.add_false();
-                flags.carry.add_false();
-            }
-            (byte1.wrapping_add(byte2), flags)
+                Flags::new().set(Flag::Overflow, Bit::False)
+                    .set(Flag::Carry, Bit::False)
+            })
         },
         Mnemonic::SUB => {
-            if byte1 < byte2 {
-                flags.overflow.add_true();
-                flags.carry.add_true();
+            (byte1.wrapping_sub(byte2), if byte1 < byte2 {
+                Flags::new().set(Flag::Overflow, Bit::True)
+                    .set(Flag::Carry, Bit::True)
             } else {
-                flags.overflow.add_false();
-                flags.carry.add_false();
-            }
-            (byte1.wrapping_sub(byte2), flags)
+                Flags::new().set(Flag::Overflow, Bit::False)
+                    .set(Flag::Carry, Bit::False)
+            })
         },
         Mnemonic::AND => {
-            (byte1 & byte2, flags)
+            (byte1 & byte2, Flags::new())
         },
         Mnemonic::OR => {
-            (byte1 | byte2, flags)
+            (byte1 | byte2, Flags::new())
         },
         Mnemonic::XOR => {
-            (byte1 ^ byte2, flags)
+            (byte1 ^ byte2, Flags::new())
         },
         Mnemonic::SHL => {
-            (byte1 << byte2, flags)
+            (byte1 << byte2, Flags::new())
         },
         _ => panic!("Operation {:?} not implemented for bytes.", op)
     }

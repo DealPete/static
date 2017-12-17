@@ -109,19 +109,18 @@ impl FlowGraph {
         }
     }
 
-    pub fn extend_node(&mut self, inst: usize, inst_length: u8) -> bool {
-        let next_inst = inst + inst_length as usize;
-        match self.get_node_index_at(inst) {
-            None => panic!("trying to extend non-existant node!"),
-            Some(node_index) => match self.get_node_index_at(next_inst) {
-                None => {
-                    self.insert_inst(node_index, next_inst);
-                    return true;
-                },
-                Some(next_node_index) => {
-                    self.add_edge(node_index, next_node_index);
-                    return false;
-                }
+    pub fn extend_node(&mut self, from_index: usize, to_index: usize) -> bool {
+        let from_node_index = self.get_node_index_at(from_index)
+            .expect("trying to extend non-existant node!");
+
+        match self.get_node_index_at(to_index) {
+            None => {
+                self.insert_inst(from_node_index, to_index);
+                return true;
+            },
+            Some(to_node_index) => {
+                self.add_edge(from_node_index, to_node_index);
+                return false;
             }
         }
     }
