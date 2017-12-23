@@ -26,12 +26,12 @@ fn main() {
 
         let program = Program {
             initial_state: initial_state,
-            flow_graph: graph::FlowGraph::new(),
             instructions: HashMap::new(),
+            flow_graph: graph::FlowGraph::new(),
             context: dos::DOS {}
         };
 
-        let final_program = dis::disassemble_load_module(program);
+        let final_program = analyse::disassemble_load_module(program);
         println!("{}", final_program);
     } else {
 		println!("usage: dis <file-to-disassemble>");

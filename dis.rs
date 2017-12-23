@@ -1,147 +1,6 @@
-use graph;
 use defs::*;
-use analyse;
 
-pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a, C>) -> Program<'a, C> {
-    let entry = program.entry_point();
-    let mut analyser = analyse::Analyser::new();
-
-    program.flow_graph.add_node_at(entry, true);
-
-    walk_buffer(&mut program, entry);
-
-    loop {
-        let results = analyser.find_undiscovered_code(&program);
-
-        if results.len() == 0 {
-            break
-        }
-
-        for (state, from_index, to_index) in results {
-            let instruction = *program.instructions.get(&from_index)
-                .expect("from index points to non-existent instruction");
-
-            match instruction.mnemonic {
-                Mnemonic::INT => {
-                    if program.context.does_int_always_end_program(state, instruction) {
-                        continue;
-                    } else {
-                        if program.flow_graph.extend_node(from_index, to_index) {
-                            walk_buffer(&mut program, to_index);
-                        }
-                    }
-                },
-                Mnemonic::JMP => {
-                    match program.flow_graph.get_node_index_at(from_index) {
-                        Some(source_node) => {
-                            if add_jump_to_flow_graph(&mut program.flow_graph, source_node, to_index) {
-                                walk_buffer(&mut program, to_index);
-                            }
-                        },
-                        None => panic!("source of indirect jump not in flow graph!")
-                    }
-                },
-                _ => panic!("unimplemented mnemonic for undiscovered code entry point.")
-            }
-        }
-    }
-
-    program
-}
-
-pub fn walk_buffer<'program, C: Context<'program>>(program: &mut Program<'program, C>, entry: usize) {
-    let mut offset;
-    let mut jump_destinations : Vec<usize> = Vec::new();
-    jump_destinations.push(entry);
-
-    while let Some(dest) = jump_destinations.pop() {
-        match program.flow_graph.get_node_index_at(dest) {
-            None => panic!("No node created for instruction at {:x}.", dest),
-            Some(node) => {
-                offset = dest;
-                let mut cont = true;
-                while cont {
-                    let inst = match decode_instruction(&program.initial_state.load_module.buffer, offset) {
-                        Ok(instruction) => instruction,
-                        Err(err) => {
-                           println!("{}", program);
-                           panic!(err);
-                        }
-                    };
-                    let next_offset = inst.length as usize + offset;
-                    if inst.mnemonic == Mnemonic::INT {
-                        if program.context.can_int_end_program(&inst) {
-                            cont = false;
-                        }
-                    }
-                    if inst.mnemonic.is_branch()
-                        || next_offset >= program.initial_state.load_module.buffer.len() {
-                        cont = false;
-                        if inst.is_rel_branch() {
-                            jump_destinations.append(&mut handle_branch(program, node, offset, &inst));
-                        }
-                    } else {
-                        if let Some(target_node) = program.flow_graph.get_node_index_at(next_offset) {
-                            program.flow_graph.add_edge(node, target_node);
-                            cont = false;
-                        }
-                    }
-
-                    if offset != dest {
-                        program.flow_graph.insert_inst(node, offset);
-                    }
-                    program.instructions.insert(offset, inst);
-                    offset = next_offset;
-                }
-            }
-        }
-    }
-}
-
-fn handle_branch<'program, C: Context<'program>>(program: &mut Program<'program, C>, node: usize, offset: usize, inst: &Instruction) -> Vec<usize> {
-    let mut jump_destinations = Vec::new();
-    let next_offset = offset + inst.length as usize;
-
-    let target = match inst.op1 {
-        Some(Operand::Imm8(rel)) => add_rel8(next_offset, rel),
-        Some(Operand::Imm16(rel)) => add_rel16(next_offset, rel),
-        _ => panic!("unimplemented operand for relative jump!")
-    };
-
-    if add_jump_to_flow_graph(&mut program.flow_graph, node, target) {
-        jump_destinations.push(target);
-    }
-
-    if inst.mnemonic != Mnemonic::JMP && next_offset < program.initial_state.load_module.buffer.len() {
-        match program.flow_graph.get_node_index_at(next_offset) {
-            Some(next_node) => program.flow_graph.add_edge(node, next_node),
-            None => {
-                let new_node = program.flow_graph.add_node_at(next_offset, false);
-                program.flow_graph.add_edge(node, new_node);
-                jump_destinations.push(next_offset);
-            }
-        }
-    }
-
-    return jump_destinations;
-}
-
-fn add_jump_to_flow_graph(flow_graph: &mut graph::FlowGraph, source_node: usize, target_offset: usize) -> bool {
-    match flow_graph.get_node_index_at(target_offset) {
-        None => {
-            let target_node = flow_graph.add_node_at(target_offset, true);
-            flow_graph.add_edge(source_node, target_node);
-            true
-        }
-        Some(next_node) => {
-            flow_graph.split_node_at(next_node, target_offset);
-            flow_graph.add_edge(source_node, next_node);
-            false
-        }
-    }
-}
-
-fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
+pub fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
 	let code = buffer[offset];
 	if code < 0x40 && code % 8 < 6 {
 		decode_regular_inst(&buffer, offset)
@@ -195,13 +54,13 @@ fn decode_with_segment_prefix(buffer: &[u8], offset: usize) -> Result<Instructio
                 _ => return Err(String::from("Improper prefix"))
             };
             inst.op1 = match inst.op1 {
-                Some(Operand::SegPtr(_, pointer)) =>
-                    Some(Operand::SegPtr(seg_prefix, pointer)),
+                Some(Operand::Pointer(pointer)) =>
+                    Some(Operand::Pointer(pointer.set_segment(seg_prefix))),
                 operand => operand
             };
             inst.op2 = match inst.op2 {
-                Some(Operand::SegPtr(_, pointer)) =>
-                    Some(Operand::SegPtr(seg_prefix, pointer)),
+                Some(Operand::Pointer(pointer)) =>
+                    Some(Operand::Pointer(pointer.set_segment(seg_prefix))),
                 operand => operand
             };
             inst.length += 1;
@@ -426,13 +285,15 @@ fn decode_xchg_ax(code: u8) -> Result<Instruction, String> {
 
 fn decode_mov_moffset(buffer: &[u8], offset: usize) -> Instruction {
     let code = buffer[offset];
+    let size = code & 1;
     let mut inst = Instruction::new(Mnemonic::MOV);
-    let op1 = Some(if code & 1 != 0 {
+    let op1 = Some(if size != 0 {
         Operand::Register8(Register::AL)
     } else {
         Operand::Register16(Register::AX)
     });
-    let op2 = Some(Operand::SegPtr(Register::DS, Pointer::Disp16(get_word(buffer, offset + 1))));
+    let op2 = Some(Operand::Pointer(
+        Pointer::new(size, PtrType::Disp16(get_word(buffer, offset + 1)))));
     if code & 2 != 0 {
         inst.op1 = op2;
         inst.op2 = op1;
@@ -707,57 +568,60 @@ fn decode_mod_rm(buffer: &[u8], offset: usize, size: u8, dir: u8) -> (Option<Ope
     let (r_op1, r_op2, r_length) = match mode {
         0 => match op2
             {
-            0 => (reg(op1), Operand::SegPtr(Register::DS,
-                Pointer::RegReg(Register::BX, Register::SI)), 1),
-            1 => (reg(op1), Operand::SegPtr(Register::DS,
-                Pointer::RegReg(Register::BX, Register::DI)), 1),
-            2 => (reg(op1), Operand::SegPtr(Register::DS,
-                Pointer::RegReg(Register::BP, Register::SI)), 1),
-            3 => (reg(op1), Operand::SegPtr(Register::DS,
-                Pointer::RegReg(Register::BP, Register::DI)), 1),
-            4 => (reg(op1), Operand::SegPtr(Register::DS, Pointer::Reg(Register::SI)), 1),
-            5 => (reg(op1), Operand::SegPtr(Register::DS, Pointer::Reg(Register::DI)), 1),
-            6 => (reg(op1), Operand::SegPtr(Register::DS,
-                Pointer::Disp16(get_word(&buffer, offset + 1))), 3),
-            7 => (reg(op1), Operand::SegPtr(Register::DS, Pointer::Reg(Register::BX)), 1),
+            0 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::RegReg(Register::BX, Register::SI))), 1),
+            1 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::RegReg(Register::BX, Register::DI))), 1),
+            2 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::RegReg(Register::BP, Register::SI))), 1),
+            3 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::RegReg(Register::BP, Register::DI))), 1),
+            4 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::Reg(Register::SI))), 1),
+            5 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::Reg(Register::DI))), 1),
+            6 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::Disp16(get_word(&buffer, offset + 1)))), 3),
+            7 => (reg(op1), Operand::Pointer(
+                Pointer::new(size, PtrType::Reg(Register::BX))), 1),
             _ => panic!("Unknown r/m bits!")
             },
         1 => (reg(op1), match op2 {
-            0 => Operand::SegPtr(Register::DS,
-                Pointer::RegRegDisp8(Register::BX, Register::SI, buffer[offset + 1])),
-            1 => Operand::SegPtr(Register::DS,
-                Pointer::RegRegDisp8(Register::BX, Register::DI, buffer[offset + 1])),
-            2 => Operand::SegPtr(Register::DS,
-                Pointer::RegRegDisp8(Register::BP, Register::SI, buffer[offset + 1])),
-            3 => Operand::SegPtr(Register::DS,
-                Pointer::RegRegDisp8(Register::BP, Register::DI, buffer[offset + 1])),
-            4 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp8(Register::SI, buffer[offset + 1])),
-            5 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp8(Register::DI, buffer[offset + 1])),
-            6 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp8(Register::BP, buffer[offset + 1])),
-            7 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp8(Register::BX, buffer[offset + 1])),
+            0 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp8(Register::BX, Register::SI, buffer[offset + 1]))),
+            1 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp8(Register::BX, Register::DI, buffer[offset + 1]))),
+            2 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp8(Register::BP, Register::SI, buffer[offset + 1]))),
+            3 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp8(Register::BP, Register::DI, buffer[offset + 1]))),
+            4 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp8(Register::SI, buffer[offset + 1]))),
+            5 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp8(Register::DI, buffer[offset + 1]))),
+            6 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp8(Register::BP, buffer[offset + 1]))),
+            7 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp8(Register::BX, buffer[offset + 1]))),
             _ => panic!("Unknown r/m bits!")
             }, 2),
         2 => (reg(op1), match op2 {
-            0 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BX,
-                Register::SI, get_word(&buffer, offset + 1))),
-            1 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BX,
-                Register::DI, get_word(&buffer, offset + 1))),
-            2 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BP,
-                Register::SI, get_word(&buffer, offset + 1))),
-            3 => Operand::SegPtr(Register::DS, Pointer::RegRegDisp16(Register::BP,
-                Register::DI, get_word(&buffer, offset + 1))),
-            4 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp16(Register::SI, get_word(&buffer, offset + 1))),
-            5 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp16(Register::DI, get_word(&buffer, offset + 1))),
-            6 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp16(Register::BP, get_word(&buffer, offset + 1))),
-            7 => Operand::SegPtr(Register::DS,
-                Pointer::RegDisp16(Register::BX, get_word(&buffer, offset + 1))),
+            0 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp16(Register::BX, Register::SI, get_word(&buffer, offset + 1)))),
+            1 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp16(Register::BX, Register::DI, get_word(&buffer, offset + 1)))),
+            2 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp16(Register::BP, Register::SI, get_word(&buffer, offset + 1)))),
+            3 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegRegDisp16(Register::BP, Register::DI, get_word(&buffer, offset + 1)))),
+            4 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp16(Register::SI, get_word(&buffer, offset + 1)))),
+            5 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp16(Register::DI, get_word(&buffer, offset + 1)))),
+            6 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp16(Register::BP, get_word(&buffer, offset + 1)))),
+            7 => Operand::Pointer(Pointer::new(size,
+                PtrType::RegDisp16(Register::BX, get_word(&buffer, offset + 1)))),
             _ => panic!("Unknown r/m bits!")
             }, 3),
         3 => (reg(op1), reg(op2), 1),

@@ -1,7 +1,6 @@
 use defs::*;
 use std::fmt;
 use std::ops::Add;
-use std::ops::Sub;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -33,7 +32,9 @@ impl<'a> State<'a> {
 
     pub fn union(self, state: State<'a>) -> State<'a> {
         if self.cs != state.cs || self.ip != state.ip {
-            panic!("Unifying states with different cs/ip unimplemented");
+            println!("Unifying states with different cs/ip unimplemented");
+            panic!("first state has {:x}:{:x}, second state has {:x}:{:x}",
+                self.cs, self.ip, state.cs, state.ip);
         };
         State {
             cs: self.cs,
@@ -43,11 +44,15 @@ impl<'a> State<'a> {
             load_module: state.load_module,
             memory: {
                 let mut new_memory = HashMap::new();
-                for (offset, byte) in self.memory {
-                    new_memory.insert(offset, byte);
+                for (offset, value) in self.memory.iter() {
+                    new_memory.insert(*offset, value.clone());
                 }
-                for (offset, byte) in state.memory {
-                    new_memory.insert(offset, byte);
+                for (offset, value) in state.memory.iter() {
+                    match self.memory.get(offset) {
+                        None => new_memory.insert(*offset, value.clone()),
+                        Some(memory) =>
+                            new_memory.insert(*offset, memory.clone().union(value.clone()))
+                    };
                 }
                 new_memory
             }
@@ -83,6 +88,19 @@ impl<'a> State<'a> {
         }
     }
 
+    pub fn unpack_reg8(&self, reg:Register) -> Option<u8> {
+        match self.get_reg8(reg) {
+            Byte::Undefined | Byte::AnyValue => None,
+            Byte::Int(set) => {
+                if set.len() > 1 {
+                    None
+                } else {
+                    Some(*set.iter().collect::<Vec<&u8>>()[0])
+                }
+            }
+        }
+    }
+
     pub fn get_reg16(&self, reg: Register) -> Word {
         match reg {
             Register::AX => self.regs.ax.clone(),
@@ -99,7 +117,28 @@ impl<'a> State<'a> {
             Register::SS => self.regs.ss.clone(),
             Register::BP => self.regs.bp.clone(),
             Register::SP => self.regs.sp.clone(),
+            Register::SI => self.regs.si.clone(),
+            Register::DI => self.regs.di.clone(),
             _ => panic!("register {:?} is not a word register.", reg)
+        }
+    }
+
+    pub fn unpack_reg16(&self, reg:Register) -> Option<u16> {
+        let register = match self.get_reg16(reg) {
+            Word::Bytes(bytel, byteh) => bytel.combine(byteh),
+            word => word
+        };
+        
+        match register {
+            Word::Undefined | Word::AnyValue => None,
+            Word::Int(set) => {
+                if set.len() > 1 {
+                    None
+                } else {
+                    Some(*set.iter().collect::<Vec<&u16>>()[0])
+                }
+            },
+            _ => panic!("shouldn't be here")
         }
     }
 
@@ -188,10 +227,15 @@ impl<'a> State<'a> {
     }
 
     pub fn get_value(&self, operand: Operand) -> Value {
-        match operand {
-            Operand::Register8(_) | Operand::Imm8(_) =>
-                Value::Byte(self.get_byte(operand)),
-            _ => Value::Word(self.get_word(operand))
+        let size = match operand {
+            Operand::Register8(_) | Operand::Imm8(_) => 0,
+            Operand::Pointer(pointer) => pointer.size,
+            _ => 1
+        };
+        match size {
+            0 => Value::Byte(self.get_byte(operand)),
+            1 => Value::Word(self.get_word(operand)),
+            _ => panic!("operand can't have size > 1")
         }
     }
 
@@ -201,11 +245,11 @@ impl<'a> State<'a> {
                 panic!("can't get word from byte source"),
             Operand::Register8(reg) => self.get_reg8(reg),
             Operand::Imm8(imm) => Byte::new(imm as u8),
-            Operand::SegPtr(segment, pointer) => match self.get_reg16(segment) {
+            Operand::Pointer(pointer) => match self.get_reg16(pointer.segment) {
                 Word::Undefined => Byte::Undefined,
                 Word::AnyValue => panic!("trying to read from unlimited segment"),
                 Word::Int(segments) => {
-                    match self.pointer_offset(pointer) {
+                    match self.pointer_offset(pointer.value) {
                         Word::Undefined => Byte::Undefined,
                         Word::AnyValue => panic!("trying to read from unlimited offset"),
                         Word::Int(offsets) => self.read_memory_byte(segments, offsets),
@@ -223,11 +267,11 @@ impl<'a> State<'a> {
                 panic!("can't get word from byte source"),
             Operand::Register16(reg) => self.get_reg16(reg),
             Operand::Imm16(imm) => Word::new(imm as u16),
-            Operand::SegPtr(segment, pointer) => match self.get_reg16(segment) {
+            Operand::Pointer(pointer) => match self.get_reg16(pointer.segment) {
                 Word::Undefined => Word::Undefined,
                 Word::AnyValue => panic!("trying to read from unlimited segment"),
                 Word::Int(segments) => {
-                    match self.pointer_offset(pointer) {
+                    match self.pointer_offset(pointer.value) {
                         Word::Undefined => Word::Undefined,
                         Word::AnyValue => panic!("trying to read from unlimited offset"),
                         Word::Int(offsets) => self.read_memory_word(segments, offsets),
@@ -236,15 +280,6 @@ impl<'a> State<'a> {
                 },
                 _ => panic!("Invalid value for segment.")
             }
-        }
-    }
-
-    pub fn get_combined_word(&self, operand: Operand) -> Word {
-        let word = self.get_word(operand);
-        if let Word::Bytes(bytel, byteh) = word {
-            bytel.combine(byteh)
-        } else {
-            word
         }
     }
 
@@ -259,19 +294,18 @@ impl<'a> State<'a> {
         match operand {
             Operand::Register16(target_reg) =>
                 self.set_reg16(target_reg, word),
-            Operand::SegPtr(segment, pointer) => match self.get_reg16(segment) {
+            Operand::Pointer(pointer) => match self.get_reg16(pointer.segment) {
                 Word::Undefined => self,
                 Word::AnyValue =>
                     panic!("trying to write to memory with unlimited segment."),
                 Word::Int(segments) => {
-                    match self.pointer_offset(pointer) {
+                    match self.pointer_offset(pointer.value) {
                         Word::Undefined =>
                             panic!("trying to write to undefined memory offset."),
                         Word::AnyValue =>
                             panic!("trying to write to unlimited memory offset."),
-                        Word::Int(offsets) => {
-                            self.write_memory(segments, offsets, Value::Word(word))
-                        },
+                        Word::Int(offsets) =>
+                            self.write_memory(segments, offsets, Value::Word(word)),
                         _ => panic!("shouldn't be here!")
                     }
                 },
@@ -299,12 +333,12 @@ impl<'a> State<'a> {
         match operand {
             Operand::Register8(target_reg) =>
                 self.set_reg8(target_reg, byte),
-            Operand::SegPtr(segment, pointer) => match self.get_reg16(segment) {
+            Operand::Pointer(pointer) => match self.get_reg16(pointer.segment) {
                 Word::Undefined => self,
                 Word::AnyValue =>
                     panic!("trying to write to memory with unlimited segment."),
                 Word::Int(segments) => {
-                    match self.pointer_offset(pointer) {
+                    match self.pointer_offset(pointer.value) {
                         Word::Undefined =>
                             panic!("trying to write to undefined memory offset."),
                         Word::AnyValue =>
@@ -360,6 +394,10 @@ impl<'a> State<'a> {
     }
 
     fn write_memory(self, segments: HashSet<u16>, offsets: HashSet<u16>, value: Value) -> State<'a> {
+        if segments.len() > 1 || offsets.len() > 1 {
+            println!("{}", &self);
+            panic!("writing to nondeterministic memory location no yet supported.");
+        };
         let mut new_memory = self.memory.clone();
         for segment in segments {
             for offset in offsets.iter() {
@@ -373,21 +411,21 @@ impl<'a> State<'a> {
         }
     }
 
-    fn pointer_offset(&self, pointer: Pointer) -> Word {
-        match pointer {
-            Pointer::Disp16(offset) => Word::new(offset),
-            Pointer::Reg(register) => self.get_reg16(register),
-            Pointer::RegReg(register1, register2) =>
+    fn pointer_offset(&self, ptr_type: PtrType) -> Word {
+        match ptr_type {
+            PtrType::Disp16(offset) => Word::new(offset),
+            PtrType::Reg(register) => self.get_reg16(register),
+            PtrType::RegReg(register1, register2) =>
                 self.get_reg16(register1) + self.get_reg16(register2),
-            Pointer::RegDisp8(register, byte) =>
+            PtrType::RegDisp8(register, byte) =>
                 self.get_reg16(register) + Word::new(byte as u16),
-            Pointer::RegRegDisp8(register1, register2, byte) =>
+            PtrType::RegRegDisp8(register1, register2, byte) =>
                 self.get_reg16(register1) 
                 + self.get_reg16(register2)
                 + Word::new(byte as u16),
-            Pointer::RegDisp16(register, offset) =>
+            PtrType::RegDisp16(register, offset) =>
                 self.get_reg16(register) + Word::new(offset),
-            Pointer::RegRegDisp16(register1, register2, offset) =>
+            PtrType::RegRegDisp16(register1, register2, offset) =>
                 self.get_reg16(register1)
                 + self.get_reg16(register2)
                 + Word::new(offset)
@@ -400,11 +438,14 @@ impl<'a> fmt::Display for State<'a> {
         let regs = &self.regs;
         let line1 = format!("AX={}  BX={}  CX={}  DX={}  SP={}  BP={}  SI={}  DI={}",
         regs.ax, regs.bx, regs.cx, regs.dx, regs.sp, regs.bp, regs.si, regs.di);
-        let line2 = format!("DS={}  ES={}  SS={}  CS={:04x}  IP={:04x}",
-            regs.ds, regs.es, regs.ss, self.cs, self.ip);
+        let line2 = format!("DS={}  ES={}  SS={}  CS={:04x}  IP={:04x}  {}",
+            regs.ds, regs.es, regs.ss, self.cs, self.ip, self.flags);
         let mut memory = String::new();
         for (address, value) in self.memory.iter() {
-            memory.push_str(format!("[{:x}] = {}\t", address, value).as_str());
+            let offset = 16 * self.unpack_reg16(Register::DS)
+                .expect("Undeterministic DS not support for displaying memory.")
+                as usize;
+            memory.push_str(format!("[{:x}] = {}\t", address - offset, value).as_str());
         };
         return write!(f, "{}\n{}\n{}", line1, line2, memory);
     }
@@ -550,6 +591,15 @@ impl Flags {
     }
 }
 
+impl fmt::Display for Flags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "CPAZSIDO: {}{}{}{}{}{}{}{}",
+            self.carry, self.parity, self.adjust, self.zero,
+            self.sign, self.interrupt, self.direction,
+            self.overflow)
+    }
+}
+
 #[derive(Copy, Clone)]
 pub enum Flag {
     Carry,
@@ -578,6 +628,19 @@ impl Value {
             &Value::Byte(ref byte1) => match value {
                 &Value::Byte(ref byte2) => byte1.is_subset(&byte2),
                 _ => panic!("can't compore bytes and words.")
+            }
+        }
+    }
+
+    pub fn union(self, value: Value) -> Value {
+        match self {
+            Value::Word(word1) => match value {
+                Value::Word(word2) => Value::Word(word1.union(word2)),
+                _ => panic!("can't combine words and bytes.")
+            },
+            Value::Byte(byte1) => match value {
+                Value::Byte(byte2) => Value::Byte(byte1.union(byte2)),
+                _ => panic!("can't combine bytes and words.")
             }
         }
     }
@@ -686,6 +749,28 @@ impl Word {
                     set
                 }),
             Word::Bytes(_, ref byte_high) => byte_high.clone()
+        }
+    }
+
+    pub fn can_be(&self, word: u16) -> bool {
+        match *self {
+            Word::Undefined => panic!("testing undefined word"),
+            Word::AnyValue => true,
+            Word::Int(ref set) => set.contains(&word),
+            Word::Bytes(ref bytel, ref byteh) =>
+                bytel.can_be((word % 0x100) as u8)
+                && byteh.can_be((word / 0x100) as u8)
+        }
+    }
+
+    pub fn compare(&self, word: u16) -> (bool, bool) {
+        match *self {
+            Word::Undefined => panic!("testing undefined word"),
+            Word::AnyValue => (true, false),
+            Word::Int(ref set) => (set.contains(&word),
+                set.contains(&word) || set.len() > 1),
+            Word::Bytes(ref bytel, ref byteh) =>
+                bytel.clone().combine(byteh.clone()).compare(word)
         }
     }
 }
@@ -816,7 +901,6 @@ impl Byte {
         }
     }
 
-
     fn is_subset(&self, byte: &Byte) -> bool {
         match *self {
             Byte::Undefined => match *byte {
@@ -832,6 +916,23 @@ impl Byte {
                 Byte::AnyValue => true,
                 Byte::Int(ref set2) => set1.is_subset(&set2)
             }
+        }
+    }
+
+    pub fn can_be(&self, byte: u8) -> bool {
+        match *self {
+            Byte::Undefined => panic!("testing undefined word"),
+            Byte::AnyValue => true,
+            Byte::Int(ref set) => set.contains(&byte),
+        }
+    }
+
+    pub fn compare(&self, byte: u8) -> (bool, bool) {
+        match *self {
+            Byte::Undefined => panic!("testing undefined word"),
+            Byte::AnyValue => (true, false),
+            Byte::Int(ref set) => (set.contains(&byte),
+                set.contains(&byte) || set.len() > 1),
         }
     }
 }
@@ -916,5 +1017,22 @@ impl Bit {
                 => Bit::TrueAndFalse
         }
     }
+
+    pub fn set(self, predicate: bool) -> Bit {
+        match predicate {
+            true => Bit::True,
+            false => Bit::False
+        }
+    }
 }
 
+impl fmt::Display for Bit {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", match *self {
+            Bit::Undefined => "?",
+            Bit::True => "T",
+            Bit::False => "F",
+            Bit::TrueAndFalse => "*"
+        })
+    }
+}

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 pub struct Program<'a, C: Context<'a>> {
     pub initial_state: State<'a>,
-    pub flow_graph: graph::FlowGraph,
+    pub flow_graph: graph::FlowGraph<'a>,
     pub instructions: HashMap<usize, Instruction>,
     pub context: C
 }
@@ -15,10 +15,6 @@ impl<'a, C: Context<'a>> Program<'a, C> {
         16 * self.initial_state.cs as usize
             + self.initial_state.ip as usize
             - 16 * self.initial_state.load_module.memory_segment as usize
-    }
-
-    pub fn get_memory_address(&self, offset: usize) -> usize {
-        16 * self.initial_state.load_module.memory_segment as usize + offset
     }
 
     pub fn next_inst_offset(&self, state: &State<'a>) -> usize {
@@ -64,10 +60,8 @@ impl<'a, C: Context<'a>> fmt::Display for Program<'a, C> {
     }
 }
 
-pub trait Context<'state> {
-    fn simulate_int(&self, state: State<'state>, inst:&Instruction) -> State<'state>;
-    fn can_int_end_program(&self, instruction: &Instruction) -> bool;
-    fn does_int_always_end_program(&self, state: State, instruction: Instruction) -> bool;
+pub trait Context<'a> {
+    fn simulate_int(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>>;
 }
 
 pub struct LoadModule {
@@ -137,7 +131,7 @@ pub enum Operand {
     Register16(Register),
     Imm8(i8),
     Imm16(i16),
-    SegPtr(Register, Pointer),
+    Pointer(Pointer),
 }
 
 impl fmt::Display for Operand {
@@ -147,23 +141,23 @@ impl fmt::Display for Operand {
                 &Operand::Register16(ref reg) => write!(f, "{:?}", reg),
             &Operand::Imm8(val) => write!(f, "{:02x}", val),
             &Operand::Imm16(val) => write!(f, "{:04x}", val),
-            &Operand::SegPtr(segment, pointer) => {
-                let pfx = match segment {
+            &Operand::Pointer(pointer) => {
+                let pfx = match pointer.segment {
                     Register::DS => String::from(""),
-                    _ => format!("{:?}:", segment)
+                    segment => format!("{:?}:", segment)
                 };
-                match pointer {
-                    Pointer::Disp16(val) => write!(f, "[{}{:04x}]", pfx, val),
-                    Pointer::Reg(ref reg) => write!(f, "[{}{:?}]", pfx, reg),
-                    Pointer::RegReg(ref reg1, ref reg2) =>
+                match pointer.value {
+                    PtrType::Disp16(val) => write!(f, "[{}{:04x}]", pfx, val),
+                    PtrType::Reg(ref reg) => write!(f, "[{}{:?}]", pfx, reg),
+                    PtrType::RegReg(ref reg1, ref reg2) =>
                         write!(f, "[{}{:?}+{:?}]", pfx, reg1, reg2),
-                    Pointer::RegDisp8(ref reg, val) =>
+                    PtrType::RegDisp8(ref reg, val) =>
                         write!(f, "[{}{:?}+{:02x}]", pfx, reg, val),
-                    Pointer::RegRegDisp8(ref reg1, ref reg2, val) =>
+                    PtrType::RegRegDisp8(ref reg1, ref reg2, val) =>
                         write!(f, "[{}{:?}+{:?}+{:02x}]", pfx, reg1, reg2, val),
-                    Pointer::RegDisp16(ref reg, val) =>
+                    PtrType::RegDisp16(ref reg, val) =>
                         write!(f, "[{}{:?}+{:04x}]", pfx, reg, val),
-                    Pointer::RegRegDisp16(ref reg1, ref reg2, val) =>
+                    PtrType::RegRegDisp16(ref reg1, ref reg2, val) =>
                         write!(f, "[{}{:?}+{:?}+{:04x}]", pfx, reg1, reg2, val)
                 }
             }
@@ -172,7 +166,31 @@ impl fmt::Display for Operand {
 }
 
 #[derive(Copy, Clone, PartialEq)]
-pub enum Pointer {
+pub struct Pointer {
+    pub segment: Register,
+    pub size: u8,
+    pub value: PtrType
+}
+
+impl Pointer {
+    pub fn new(size: u8, ptr_type: PtrType) -> Pointer {
+        Pointer {
+            segment: Register::DS,
+            size: size,
+            value: ptr_type
+        }
+    }
+
+    pub fn set_segment(self, reg: Register) -> Pointer {
+        Pointer {
+            segment: reg,
+            .. self
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum PtrType {
     Disp16(u16),
     Reg(Register),
     RegReg(Register, Register),

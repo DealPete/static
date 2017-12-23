@@ -9,40 +9,57 @@ const PROGRAM_SEGMENT: u16 = 0x76a;
 pub struct DOS {
 }
 
-impl<'program> Context<'program> for DOS {
-    fn simulate_int(&self, state: State<'program>, inst: &Instruction) -> State<'program> {
-        state
-    }
-
-    fn does_int_always_end_program(&self, state: State, instruction: Instruction) -> bool {
-        match instruction.op1 {
+impl<'a> Context<'a> for DOS {
+    fn simulate_int(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
+        match inst.op1 {
             Some(Operand::Imm8(func)) => {
                 match func {
-                    0x20 => true,
-                    0x21 => match state.get_reg8(Register::AH) {
-                        Byte::Undefined => panic!("Couldn't determine value of AH for {}.", instruction),
-                        Byte::AnyValue => false,
-                        Byte::Int(ref reg_values) => {
-                            let values = vec!(0, 0x4c).into_iter().collect();
-                            reg_values.is_subset(&values)
-                        }
-                    },
-                    _ => false
+                    0x10 => Some(simulate_int10(state)),
+                    0x20 => None,
+                    0x21 => simulate_int21(state),
+                    _ => Some(state)
                 }
             },
             _ => panic!("Expected first operand of INT to be imm8")
         }
     }
 
-    fn can_int_end_program(&self, instruction: &Instruction) -> bool {
-        if let Some(Operand::Imm8(func)) = instruction.op1 {
-            return func == 0x20 || func == 0x21;
-        }
-        panic!("Expected first operand of INT to be imm8");
+}
+
+fn simulate_int10(state: State) -> State {
+    let ah = state.unpack_reg8(Register::AH)
+        .expect("can't call INT 10 with non-deterministic AH.");
+    match ah {
+        0x00...0x02 | 0x05...0x07 => state,
+        0x03 => state
+            .set_reg8(Register::DH, Byte::AnyValue)
+            .set_reg8(Register::DL, Byte::AnyValue)
+            .set_reg8(Register::CH, Byte::AnyValue)
+            .set_reg8(Register::CL, Byte::AnyValue),
+        _ => state
     }
 }
 
-pub fn initial_state<'program>(file_buffer: Vec<u8>, load_module: &'program LoadModule) -> State<'program> {
+fn simulate_int21(state: State) -> Option<State> {
+    let ah = state.unpack_reg8(Register::AH)
+        .expect("can't call INT 21 with non-deterministic AH.");
+    match ah {
+        0x00 | 0x4c => None,
+        0x06 => {
+            if state.get_reg8(Register::DL).can_be(0xff) {
+                Some(state.set_reg8(Register::AL, Byte::AnyValue)
+                    .set_flag(Flag::Zero, Bit::TrueAndFalse))
+            } else {
+                let dl = state.get_reg8(Register::DL);
+                Some(state.set_reg8(Register::AL, dl))
+            }
+        },
+        0x09 => Some(state),
+        _ => Some(state)
+    }
+}
+
+pub fn initial_state<'a>(file_buffer: Vec<u8>, load_module: &'a LoadModule) -> State<'a> {
     let mut state = State::new(load_module)
         .set_reg16(Register::DS, Word::new(PSP_SEGMENT))
         .set_reg16(Register::ES, Word::new(PSP_SEGMENT));
