@@ -1,5 +1,6 @@
 use defs::*;
 use state::*;
+use x86::arch::*;
 
 // We assume the PSP is loaded at 0x75a and the program at 0x76a.
 // This is what DOSBOX uses as a default.
@@ -9,8 +10,8 @@ const PROGRAM_SEGMENT: u16 = 0x76a;
 pub struct DOS {
 }
 
-impl<'a> Context<'a> for DOS {
-    fn simulate_int(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
+impl Context for DOS {
+    fn simulate_int<'a>(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
         match inst.op1 {
             Some(Operand::Imm8(func)) => {
                 match func {
@@ -65,11 +66,11 @@ pub fn initial_state<'a>(file_buffer: Vec<u8>, load_module: &'a LoadModule) -> S
         .set_reg16(Register::ES, Word::new(PSP_SEGMENT));
 
     if file_buffer[0..2] == [0x4d, 0x5a] {
-        state.cs = get_word(&file_buffer, 0x16).wrapping_add(PROGRAM_SEGMENT);
-        state.ip = get_word(&file_buffer, 0x14);
+        state.cs = get_word_le(&file_buffer, 0x16).wrapping_add(PROGRAM_SEGMENT);
+        state.ip = get_word_le(&file_buffer, 0x14);
         state.set_reg16(Register::SS,
-            Word::new(get_word(&file_buffer, 0xe).wrapping_add(PROGRAM_SEGMENT)))
-            .set_reg16(Register::SP, Word::new(get_word(&file_buffer, 0x10)))
+            Word::new(get_word_le(&file_buffer, 0xe).wrapping_add(PROGRAM_SEGMENT)))
+            .set_reg16(Register::SP, Word::new(get_word_le(&file_buffer, 0x10)))
     } else {
         state.cs = PSP_SEGMENT;
         state.ip = 0x100;
@@ -81,7 +82,7 @@ pub fn initial_state<'a>(file_buffer: Vec<u8>, load_module: &'a LoadModule) -> S
 pub fn load_module(file_buffer: &[u8]) -> LoadModule {
     let mut buffer = Vec::new();
     let header_size = if file_buffer[0..2] == [0x4d, 0x5a] {
-        16*get_word(&file_buffer, 0x08) as usize
+        16*get_word_le(&file_buffer, 0x08) as usize
     } else {
         0
     };

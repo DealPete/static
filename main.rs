@@ -1,12 +1,16 @@
 mod analyse;
 mod defs;
-mod dis;
-mod dos;
-mod sim;
+mod x86 {
+    pub mod arch;
+    pub mod dis;
+    pub mod dos;
+    pub mod sim;
+}
 mod graph;
 mod state;
 
 use defs::*;
+use x86::arch::*;
 use std::collections::HashMap;
 
 fn main() {
@@ -21,14 +25,14 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let load_module = dos::load_module(&buffer);
-        let initial_state = dos::initial_state(buffer, &load_module); 
+        let load_module = x86::dos::load_module(&buffer);
+        let initial_state = x86::dos::initial_state(buffer, &load_module); 
 
         let program = Program {
             initial_state: initial_state,
-            instructions: HashMap::new(),
+            instructions: HashMap::<usize, Instruction>::new(),
             flow_graph: graph::FlowGraph::new(),
-            context: dos::DOS {}
+            context: x86::dos::DOS {}
         };
 
         let final_program = analyse::disassemble_load_module(program);

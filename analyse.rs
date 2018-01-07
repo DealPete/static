@@ -1,9 +1,10 @@
 use defs::*;
 use state::*;
-use dis;
-use sim;
+use x86::arch::*;
+use x86::dis;
+use x86::sim;
 
-pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a, C>) -> Program<'a, C> {
+pub fn disassemble_load_module<'a, C: Context>(mut program: Program<'a, C, Instruction>) -> Program<'a, C, Instruction> {
     let entry = program.entry_point();
 
     program.flow_graph.add_node_at(entry, true);
@@ -13,7 +14,7 @@ pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a, C>) 
 
     while let Some(state) = live_states.pop() {
         let inst_offset = program.next_inst_offset(&state);
-        let inst = match dis::decode_instruction(&state.load_module.buffer, inst_offset) {
+        let inst: Instruction = match dis::decode_instruction(&state.load_module.buffer, inst_offset) {
             Ok(instruction) => instruction,
             Err(err) => {
                println!("{}", program);
@@ -31,7 +32,7 @@ pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a, C>) 
                 live_states.push(next_state);
             },
             sim::Result::Branch(new_states) => {
-                live_states.append(&mut add_new_states(inst_offset, &mut program, new_states, inst.mnemonic != Mnemonic::RET));
+                live_states.append(&mut add_new_states(inst_offset, &mut program, new_states, inst.is_return()));
                 println!("{}", program.flow_graph);
                 println!("{}", program);
             }
@@ -43,7 +44,7 @@ pub fn disassemble_load_module<'a, C: Context<'a>>(mut program: Program<'a, C>) 
     program
 }
 
-fn add_new_states<'a, C: Context<'a>>(inst_offset: usize, program: &mut Program<'a, C>, new_states: Vec<State<'a>>, needs_label: bool) -> Vec<State<'a>> {
+fn add_new_states<'a, C: Context>(inst_offset: usize, program: &mut Program<'a, C, Instruction>, new_states: Vec<State<'a>>, needs_label: bool) -> Vec<State<'a>> {
     let mut live_states = Vec::new();
 
     for new_state in new_states {
@@ -76,7 +77,7 @@ fn add_new_states<'a, C: Context<'a>>(inst_offset: usize, program: &mut Program<
                                     Some(ref edge_state) => {
                                         if !new_state.is_subset(&edge_state) {
                                             new_edge_state = Some(new_state.clone().union(edge_state.clone()));
-                                            live_states.push(new_state.clone().sync_with(edge_state);
+                                            live_states.push(new_state.clone());
                                         }
                                     }
                                 }
