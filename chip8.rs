@@ -4,9 +4,6 @@ mod chip8 {
     pub mod dis;
 }
 
-use defs::*;
-use chip8::arch::*;
-
 fn main() {
     use std::env;
     use std::io::Read;
@@ -19,12 +16,15 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-    let mut index = 0;
-    while index < buffer.len() {
-        match decode_instruction(&buffer, index) {
-            Ok(instruction) => println!("{}", instruction),
-            Err(_) => println!("????")
+        let mut index = 0;
+        while index < buffer.len() {
+            match chip8::dis::decode_instruction(&buffer, index) {
+                Ok(instruction) => println!("{}", instruction),
+                Err(_) => println!("????")
+            }
+            index += 2;
         }
-        index += 2;
+    } else {
+		println!("usage: dis <file-to-disassemble>");
     }
 }

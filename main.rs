@@ -1,16 +1,12 @@
 mod analyse;
 mod defs;
 mod x86 {
-    pub mod arch;
-    pub mod dis;
     pub mod dos;
-    pub mod sim;
+    pub mod state;
 }
 mod graph;
-mod state;
 
 use defs::*;
-use x86::arch::*;
 use std::collections::HashMap;
 
 fn main() {
@@ -36,7 +32,7 @@ fn main() {
         };
 
         let final_program = analyse::disassemble_load_module(program);
-        println!("{}", final_program);
+        final_program.print();
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }

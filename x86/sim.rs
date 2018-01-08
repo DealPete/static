@@ -1,20 +1,9 @@
 use defs::*;
-use state::*;
+use x86::state::*;
 use x86::arch::*;
 use std::collections::HashSet;
 
-pub enum Result<'a> {
-    End,
-    State(State<'a>),
-    Branch(Vec<State<'a>>)
-}
-
 pub fn simulate_next_instruction<'a, C: Context>(mut state: State<'a>, context: &C, instruction: Instruction) -> Result<'a> {
-    //println!("{}", state);
-    //println!("{}", instruction);
-    /*use std::io;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).ok();*/
     if instruction.mnemonic.is_branch() {
         Result::Branch(branch(state, instruction))
     } else if instruction.mnemonic == Mnemonic::INT {

@@ -1,21 +1,35 @@
-use state::*;
 use graph;
 use std::fmt;
-use std::clone;
-use std::marker;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ops::Add;
-use x86::arch::*;
 
-pub struct Program<'a, C: Context, Instruction: InstructionTrait> {
-    pub initial_state: State<'a>,
-    pub flow_graph: graph::FlowGraph<'a>,
-    pub instructions: HashMap<usize, Instruction>,
-    pub context: C
+pub trait Architecture {
+    fn decode_instruction<I: InstructionTrait>(buffer: &[u8], offset: usize) -> I;
+    fn simulate_next_instruction<S: StateTrait, C: Context, I: InstructionTrait>(state: S, context: C, instruction: I) -> Result<'a>;
 }
 
-impl<'a, I: InstructionTrait, C: Context> Program<'a, C, I> {
+pub trait Context {
+    fn simulate_int<S: StateTrait>(&self, state: S, inst: Instruction) -> Option<S>;
+}
+
+pub trait StateTrait : Clone + fmt::Display {
+    fn union<S: StateTrait>(self, state: S) -> S;
+    fn is_subset(&self, state: &S) -> bool;
+}
+
+pub trait InstructionTrait : Copy + Clone + fmt::Display {
+    fn is_return(&self) -> bool;
+    fn is_rel_branch(&self) -> bool;
+}
+
+pub struct Program<State: StateTrait, Instruction: InstructionTrait> {
+    pub initial_state: State,
+    pub flow_graph: FlowGraph<State>,
+    pub instructions: HashMap<usize, Instruction>,
+}
+
+impl<I: InstructionTrait, C: Context> Program<C, I> {
     pub fn entry_point(&self) -> usize {
         16 * self.initial_state.cs as usize
             + self.initial_state.ip as usize
@@ -28,51 +42,10 @@ impl<'a, I: InstructionTrait, C: Context> Program<'a, C, I> {
     }
 }
 
-impl<'a, I: InstructionTrait, C: Context> fmt::Display for Program<'a, C, I> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut output = String::new();
-        for i in 0..self.initial_state.load_module.buffer.len() {
-            if let Some(instruction) = self.instructions.get(&i) {
-                let prefix = {
-                    let node = self.flow_graph.get_node_at(i).expect(
-                        format!("instruction 0x{:x} has no node!", i).as_str());
-                    if node.insts[0] == i && node.label {
-                        format!("{:4x}:   ", i)
-                    } else {
-                        format!("        ")
-                    }
-                };
-                let inst_output = format!("{}", instruction);
-/*                let inst_output = if instruction.is_rel_branch() {
-                    let mut target = i + instruction.length as usize;
-                    match instruction.op1 {
-                        Some(Operand::Imm8(rel)) => target = add_rel8(target, rel),
-                        Some(Operand::Imm16(rel)) => target = add_rel16(target, rel),
-                        _ => panic!("Wrong operand for relative jump.")
-                    }
-                    format!("{:?} <{:x}>", instruction.mnemonic, target)
-                } else {
-                    format!("{}", instruction)
-                };*/
-                output.push_str(format!("{}{}{}\n", prefix.as_str(), inst_output,
-                    if i == self.entry_point() {
-                        "\t; program entry point"
-                    } else {
-                        ""
-                    }).as_str());
-            }
-        }
-        write!(f, "{}", output)
-    }
-}
-
-pub trait Context {
-    fn simulate_int<'a>(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>>;
-}
-
-pub trait InstructionTrait : Copy + Clone + fmt::Display {
-    fn is_return(&self) -> bool;
-    fn is_rel_branch(&self) -> bool;
+pub enum Result<'a> {
+    End,
+    State(State<'a>),
+    Branch(Vec<State<'a>>)
 }
 
 pub fn get_word_le(buffer : &[u8], offset: usize) -> u16 {
@@ -99,6 +72,12 @@ pub fn add_rel16(address: usize, rel: i16) -> usize {
     } else {
         address + (rel as usize)
     }
+}
+
+#[derive(Clone)]
+pub enum Value {
+    Word(Word),
+    Byte(Byte)
 }
 
 impl Value {

@@ -1,3 +1,5 @@
+mod dis;
+
 use defs::*;
 use std::fmt;
 
@@ -45,11 +47,11 @@ impl fmt::Display for Instruction {
         match &self.op1 {
             &None => write!(f, "{:?}", self.mnemonic),
             &Some(ref op1) => match self.op2 {
-                None => write(f, "{:?} {}", self.mnemonic, op1),
+                None => write!(f, "{:?} {}", self.mnemonic, op1),
                 Some(ref op2) => match self.op3 {
-                    None => write!(f, "{:?} {} {}", self.mnemonic, op1, op2),
+                    None => write!(f, "{:?} {}, {}", self.mnemonic, op1, op2),
                     Some(ref op3) =>
-                        write!(f, "{:?} {} {} {}", self.mnemonic, op1, op2, op3)
+                        write!(f, "{:?} {}, {}, {}", self.mnemonic, op1, op2, op3)
                 }
             }
         }
@@ -76,10 +78,10 @@ impl fmt::Display for Operand {
             &Operand::V(x) => write!(f, "V{:X}", x),
             &Operand::Address(address) => write!(f, "{:x}", address),
             &Operand::Byte(byte) => write!(f, "{:x}", byte),
-            &Operand::KeyPress => write!(f, "Key Press"),
-            &Operand::DelayTimer => write!(f, "Delay timer"),
-            &Operand::SoundTimer => write!(f, "Sound Timer"),
-            &Operand::Numeral(x) => write!(f, "Numeral V{:X}", x),
+            &Operand::KeyPress => write!(f, "Key-Press"),
+            &Operand::DelayTimer => write!(f, "Delay-timer"),
+            &Operand::SoundTimer => write!(f, "Sound-Timer"),
+            &Operand::Numeral(x) => write!(f, "Numeral-V{:X}", x),
             &Operand::Pointer => write!(f, "[I]")
         }
     }

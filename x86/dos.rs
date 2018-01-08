@@ -1,6 +1,6 @@
 use defs::*;
-use state::*;
-use x86::arch::*;
+use x86::state::*;
+use x86;
 
 // We assume the PSP is loaded at 0x75a and the program at 0x76a.
 // This is what DOSBOX uses as a default.

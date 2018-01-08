@@ -1,5 +1,61 @@
+mod dis;
+mod sim;
+mod state;
+
+use graph;
 use defs::*;
 use std::fmt;
+
+pub struct X86 {
+}
+
+impl Architecture for X86 {
+    fn decode_instruction(buffer: &[u8], offset: usize) -> Instruction {
+        dis::decode_instruction(buffer, offset)
+    }
+
+    fn simulate_next_instruction<C: Context>(state: State<'a>, context: C, instruction: Instruction) -> Result<'a> {
+        sim::simulate_next_instruction(state, context, instruction)
+    }
+}
+
+impl Program {
+    fn print(&self) {
+        let mut output = String::new();
+        for i in 0..self.initial_state.load_module.buffer.len() {
+            if let Some(instruction) = self.instructions.get(&i) {
+                let prefix = {
+                    let node = self.flow_graph.get_node_at(i).expect(
+                        format!("instruction 0x{:x} has no node!", i).as_str());
+                    if node.insts[0] == i && node.label {
+                        format!("{:4x}:   ", i)
+                    } else {
+                        format!("        ")
+                    }
+                };
+                let inst_output = format!("{}", instruction);
+                let inst_output = if instruction.is_rel_branch() {
+                    let mut target = i + instruction.length as usize;
+                    match instruction.op1 {
+                        Some(Operand::Imm8(rel)) => target = add_rel8(target, rel),
+                        Some(Operand::Imm16(rel)) => target = add_rel16(target, rel),
+                        _ => panic!("Wrong operand for relative jump.")
+                    }
+                    format!("{:?} <{:x}>", instruction.mnemonic, target)
+                } else {
+                    format!("{}", instruction)
+                };
+                output.push_str(format!("{}{}{}\n", prefix.as_str(), inst_output,
+                    if i == self.entry_point() {
+                        "\t; program entry point"
+                    } else {
+                        ""
+                    }).as_str());
+            }
+        }
+        println!("{}", output)
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct Instruction {
