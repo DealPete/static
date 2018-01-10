@@ -1,5 +1,6 @@
 use defs::*;
-use arch::*;
+use x86::arch::*;
+use x86::dos::LoadModule;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -14,7 +15,7 @@ pub struct State<'a> {
     memory : HashMap<usize, Value>
 }
 
-impl<'a> StaitTrait for State<'a> {
+impl<'a> StateTrait<State<'a>> for State<'a> {
     fn union(self, state: State<'a>) -> State<'a> {
         if self.cs != state.cs || self.ip != state.ip {
             println!("Unifying states with different cs/ip unimplemented");
@@ -44,7 +45,7 @@ impl<'a> StaitTrait for State<'a> {
         }
     }
 
-    fn is_subset(&self, state: &State) -> bool {
+    fn is_subset(&self, state: &State<'a>) -> bool {
         for (offset, value1) in self.memory.iter() {
             match state.memory.get(&offset) {
                 None => return false,
@@ -451,12 +452,6 @@ impl<'a> fmt::Display for State<'a> {
         };
         return write!(f, "{}\n{}\n{}", line1, line2, memory);
     }
-}
-
-pub struct LoadModule {
-    pub file_offset: usize,
-    pub memory_segment: u16,
-    pub buffer: Vec<u8>
 }
 
 #[derive(Clone)]

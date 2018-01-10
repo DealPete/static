@@ -1,20 +1,22 @@
-use graph;
+use graph::FlowGraph;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ops::Add;
 
-pub trait Architecture {
-    fn decode_instruction<I: InstructionTrait>(buffer: &[u8], offset: usize) -> I;
-    fn simulate_next_instruction<S: StateTrait, C: Context, I: InstructionTrait>(state: S, context: C, instruction: I) -> Result<'a>;
+pub trait Architecture<S: StateTrait<S>, I: InstructionTrait> : Copy + Clone {
+    fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<I, String>;
+    fn simulate_next_instruction<C: Context<S, I>>(&self, state: S, context: &C, instruction: I) -> SimResult<S>;
 }
 
-pub trait Context {
-    fn simulate_int<S: StateTrait>(&self, state: S, inst: Instruction) -> Option<S>;
+pub trait Context<S: StateTrait<S>, I: InstructionTrait> {
+    fn simulate_int(&self, state: S, inst: I) -> Option<S>;
+    fn entry_offset(&self, state: &S) -> usize;
+    fn next_inst_offset(&self, state: &S) -> usize;
 }
 
-pub trait StateTrait : Clone + fmt::Display {
-    fn union<S: StateTrait>(self, state: S) -> S;
+pub trait StateTrait<S: StateTrait<S>> : Clone + fmt::Display {
+    fn union(self, state: S) -> S;
     fn is_subset(&self, state: &S) -> bool;
 }
 
@@ -23,29 +25,17 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_rel_branch(&self) -> bool;
 }
 
-pub struct Program<State: StateTrait, Instruction: InstructionTrait> {
-    pub initial_state: State,
+pub struct Analysis<State: StateTrait<State>, Instruction: InstructionTrait> {
+    pub entry_offset: usize,
+    pub highest_offset: usize,
     pub flow_graph: FlowGraph<State>,
-    pub instructions: HashMap<usize, Instruction>,
+    pub instructions: HashMap<usize, Instruction>
 }
 
-impl<I: InstructionTrait, C: Context> Program<C, I> {
-    pub fn entry_point(&self) -> usize {
-        16 * self.initial_state.cs as usize
-            + self.initial_state.ip as usize
-            - 16 * self.initial_state.load_module.memory_segment as usize
-    }
-
-    pub fn next_inst_offset(&self, state: &State<'a>) -> usize {
-        let address = state.next_inst_address();
-        address - 16 * self.initial_state.load_module.memory_segment as usize
-    }
-}
-
-pub enum Result<'a> {
+pub enum SimResult<S: StateTrait<S>> {
     End,
-    State(State<'a>),
-    Branch(Vec<State<'a>>)
+    State(S),
+    Branch(Vec<S>)
 }
 
 pub fn get_word_le(buffer : &[u8], offset: usize) -> u16 {

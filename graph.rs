@@ -1,15 +1,15 @@
-use state::*;
+use defs::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-pub struct FlowGraph<'a> {
+pub struct FlowGraph<S: StateTrait<S>> {
     nodes: Vec<Node>,
-    edges: Vec<Edge<'a>>,
+    edges: Vec<Edge<S>>,
     inst_map: HashMap<usize, usize>
 }
 
-impl<'a> fmt::Display for FlowGraph<'a> {
+impl<S: StateTrait<S>> fmt::Display for FlowGraph<S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::new();
         for i in 0..self.nodes.len() {
@@ -49,8 +49,8 @@ impl<'a> fmt::Display for FlowGraph<'a> {
     }
 }
 
-impl<'a> FlowGraph<'a> {
-    pub fn new() -> FlowGraph<'a> {
+impl<S: StateTrait<S>> FlowGraph<S> {
+    pub fn new() -> FlowGraph<S> {
         FlowGraph {
             nodes: Vec::new(),
             edges: Vec::new(),
@@ -80,7 +80,7 @@ impl<'a> FlowGraph<'a> {
         }
     }
 
-    pub fn get_edge_mut(&mut self, source: usize, target: usize) -> Option<&mut Edge<'a>> {
+    pub fn get_edge_mut(&mut self, source: usize, target: usize) -> Option<&mut Edge<S>> {
         for out in self.nodes[source].outbound_edges.iter() {
             if self.edges[*out].to == target {
                 return Some(&mut self.edges[*out])
@@ -100,7 +100,7 @@ impl<'a> FlowGraph<'a> {
         false
     }
 
-    pub fn add_edge(&mut self, source: usize, target: usize, state: Option<State<'a>>) {
+    pub fn add_edge(&mut self, source: usize, target: usize, state: Option<S>) {
         match self.has_edge(source, target) {
             true => panic!("trying to add duplicate edge."),
             false => {
@@ -167,14 +167,14 @@ impl Node {
     }
 }
 
-struct Edge<'a> {
+struct Edge<S: StateTrait<S>> {
     from: usize,
     to: usize,
-    pub state: Option<State<'a>>
+    pub state: Option<S>
 }
 
-impl<'a> Edge<'a> {
-    fn new(from_node_index: usize, to_node_index: usize, state: Option<State<'a>>) -> Edge {
+impl<S: StateTrait<S>> Edge<S> {
+    fn new(from_node_index: usize, to_node_index: usize, state: Option<S>) -> Edge<S> {
         Edge {
             from: from_node_index,
             to: to_node_index,

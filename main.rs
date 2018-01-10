@@ -1,13 +1,7 @@
 mod analyse;
 mod defs;
-mod x86 {
-    pub mod dos;
-    pub mod state;
-}
 mod graph;
-
-use defs::*;
-use std::collections::HashMap;
+mod x86;
 
 fn main() {
 	use std::env;
@@ -21,18 +15,20 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let load_module = x86::dos::load_module(&buffer);
-        let initial_state = x86::dos::initial_state(buffer, &load_module); 
+        let context = x86::dos::DOS::new(&buffer);
+        let initial_state = context.initial_state(&buffer);
 
-        let program = Program {
-            initial_state: initial_state,
-            instructions: HashMap::<usize, Instruction>::new(),
-            flow_graph: graph::FlowGraph::new(),
-            context: x86::dos::DOS {}
-        };
+        let (analysis, error) = analyse::analyse(
+            buffer,
+            initial_state,
+            x86::arch::X86 {},
+            &context
+        );
 
-        let final_program = analyse::disassemble_load_module(program);
-        final_program.print();
+        analysis.print_instructions();
+        if let Some(message) = error {
+            println!("{}", message);
+        }
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }

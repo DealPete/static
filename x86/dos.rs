@@ -1,6 +1,6 @@
 use defs::*;
-use x86::state::*;
-use x86;
+use x86::arch::*;
+use x86::state::{State, Flag};
 
 // We assume the PSP is loaded at 0x75a and the program at 0x76a.
 // This is what DOSBOX uses as a default.
@@ -8,10 +8,62 @@ const PSP_SEGMENT: u16 = 0x75a;
 const PROGRAM_SEGMENT: u16 = 0x76a;
 
 pub struct DOS {
+    load_module: LoadModule
 }
 
-impl Context for DOS {
-    fn simulate_int<'a>(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
+impl DOS {
+    pub fn new(file_buffer: &[u8]) -> DOS {
+        let mut buffer = Vec::new();
+        let header_size = if file_buffer[0..2] == [0x4d, 0x5a] {
+            16*get_word_le(&file_buffer, 0x08) as usize
+        } else {
+            0
+        };
+        for i in header_size..file_buffer.len() {
+            buffer.push(file_buffer[i]);
+        }
+        DOS {
+            load_module: LoadModule {
+                file_offset: header_size,
+                memory_segment: PROGRAM_SEGMENT,
+                buffer: buffer
+            }
+        }
+    }
+
+    pub fn initial_state<'a>(&'a self, file_buffer: &[u8]) -> State<'a> {
+        let mut state = State::new(&self.load_module)
+            .set_reg16(Register::DS, Word::new(PSP_SEGMENT))
+            .set_reg16(Register::ES, Word::new(PSP_SEGMENT));
+
+        if file_buffer[0..2] == [0x4d, 0x5a] {
+            state.cs = get_word_le(&file_buffer, 0x16).wrapping_add(PROGRAM_SEGMENT);
+            state.ip = get_word_le(&file_buffer, 0x14);
+            state.set_reg16(Register::SS,
+                Word::new(get_word_le(&file_buffer, 0xe).wrapping_add(PROGRAM_SEGMENT)))
+                .set_reg16(Register::SP, Word::new(get_word_le(&file_buffer, 0x10)))
+        } else {
+            state.cs = PSP_SEGMENT;
+            state.ip = 0x100;
+            state.set_reg16(Register::SS, Word::new(PSP_SEGMENT))
+                .set_reg16(Register::SP, Word::new(0xfffe))
+        }
+    }
+}
+
+impl<'a> Context<State<'a>, Instruction> for DOS {
+    fn entry_offset(&self, state: &State<'a>) -> usize {
+        16 * state.cs as usize
+            + state.ip as usize
+            - 16 * self.load_module.memory_segment as usize
+    }
+
+    fn next_inst_offset(&self, state: &State<'a>) -> usize {
+        let address = state.next_inst_address();
+        address - 16 * self.load_module.memory_segment as usize
+    }
+
+    fn simulate_int(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
         match inst.op1 {
             Some(Operand::Imm8(func)) => {
                 match func {
@@ -24,10 +76,15 @@ impl Context for DOS {
             _ => panic!("Expected first operand of INT to be imm8")
         }
     }
-
 }
 
-fn simulate_int10(state: State) -> State {
+pub struct LoadModule {
+    pub file_offset: usize,
+    pub memory_segment: u16,
+    pub buffer: Vec<u8>
+}
+
+fn simulate_int10<'a>(state: State<'a>) -> State<'a> {
     let ah = state.unpack_reg8(Register::AH)
         .expect("can't call INT 10 with non-deterministic AH.");
     match ah {
@@ -41,7 +98,7 @@ fn simulate_int10(state: State) -> State {
     }
 }
 
-fn simulate_int21(state: State) -> Option<State> {
+fn simulate_int21<'a>(state: State<'a>) -> Option<State<'a>> {
     let ah = state.unpack_reg8(Register::AH)
         .expect("can't call INT 21 with non-deterministic AH.");
     match ah {
@@ -57,42 +114,6 @@ fn simulate_int21(state: State) -> Option<State> {
         },
         0x09 => Some(state),
         _ => Some(state)
-    }
-}
-
-pub fn initial_state<'a>(file_buffer: Vec<u8>, load_module: &'a LoadModule) -> State<'a> {
-    let mut state = State::new(load_module)
-        .set_reg16(Register::DS, Word::new(PSP_SEGMENT))
-        .set_reg16(Register::ES, Word::new(PSP_SEGMENT));
-
-    if file_buffer[0..2] == [0x4d, 0x5a] {
-        state.cs = get_word_le(&file_buffer, 0x16).wrapping_add(PROGRAM_SEGMENT);
-        state.ip = get_word_le(&file_buffer, 0x14);
-        state.set_reg16(Register::SS,
-            Word::new(get_word_le(&file_buffer, 0xe).wrapping_add(PROGRAM_SEGMENT)))
-            .set_reg16(Register::SP, Word::new(get_word_le(&file_buffer, 0x10)))
-    } else {
-        state.cs = PSP_SEGMENT;
-        state.ip = 0x100;
-        state.set_reg16(Register::SS, Word::new(PSP_SEGMENT))
-            .set_reg16(Register::SP, Word::new(0xfffe))
-    }
-}
-
-pub fn load_module(file_buffer: &[u8]) -> LoadModule {
-    let mut buffer = Vec::new();
-    let header_size = if file_buffer[0..2] == [0x4d, 0x5a] {
-        16*get_word_le(&file_buffer, 0x08) as usize
-    } else {
-        0
-    };
-    for i in header_size..file_buffer.len() {
-        buffer.push(file_buffer[i]);
-    }
-    LoadModule {
-        file_offset: header_size,
-        memory_segment: PROGRAM_SEGMENT,
-        buffer: buffer
     }
 }
 

@@ -3,17 +3,17 @@ use x86::state::*;
 use x86::arch::*;
 use std::collections::HashSet;
 
-pub fn simulate_next_instruction<'a, C: Context>(mut state: State<'a>, context: &C, instruction: Instruction) -> Result<'a> {
+pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
     if instruction.mnemonic.is_branch() {
-        Result::Branch(branch(state, instruction))
+        SimResult::Branch(branch(state, instruction))
     } else if instruction.mnemonic == Mnemonic::INT {
         state.ip = state.ip.wrapping_add(instruction.length as u16);
         match context.simulate_int(state, instruction) {
-            None => Result::End,
-            Some(state) => Result::State(state)
+            None => SimResult::End,
+            Some(state) => SimResult::State(state)
         }
     } else {
-        Result::State(simulate_instruction(state, instruction))
+        SimResult::State(simulate_instruction(state, instruction))
     }
 }
 

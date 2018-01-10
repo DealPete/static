@@ -1,8 +1,6 @@
 mod defs;
-mod chip8 {
-    pub mod arch;
-    pub mod dis;
-}
+mod graph;
+mod chip8;
 
 fn main() {
     use std::env;
