@@ -63,7 +63,7 @@ impl<'a> Context<State<'a>, Instruction> for DOS {
         address - 16 * self.load_module.memory_segment as usize
     }
 
-    fn simulate_int(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
+    fn simulate_system_call(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
         match inst.op1 {
             Some(Operand::Imm8(func)) => {
                 match func {

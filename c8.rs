@@ -1,3 +1,4 @@
+mod analyse;
 mod defs;
 mod graph;
 mod chip8;
@@ -14,13 +15,19 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let mut index = 0;
-        while index < buffer.len() {
-            match chip8::dis::decode_instruction(&buffer, index) {
-                Ok(instruction) => println!("{}", instruction),
-                Err(_) => println!("????")
-            }
-            index += 2;
+        let context = chip8::arch::Interpreter {};
+        let initial_state = chip8::state::State::new(&buffer);
+
+        let (analysis, error) = analyse::analyse(
+            &buffer,
+            initial_state,
+            chip8::arch::Chip8 {},
+            &context
+        );
+
+        analysis.print_instructions();
+        if let Some(message) = error {
+            println!("{}", message);
         }
     } else {
 		println!("usage: dis <file-to-disassemble>");

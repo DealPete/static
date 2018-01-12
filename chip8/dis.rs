@@ -3,8 +3,8 @@ use chip8::arch::*;
 
 pub fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
     let code = get_word_be(buffer, offset);
-    let x = ((code & 0x0f00) >> 8) as u8;
-    let y = ((code & 0x00f0) >> 4) as u8;
+    let x = ((code & 0x0f00) >> 8) as usize;
+    let y = ((code & 0x00f0) >> 4) as usize;
     let kk = (code & 0x00ff) as u8;
     let n = (code & 0x000f) as u8;
     match code {
@@ -83,7 +83,7 @@ fn decode_system_call(kk: u8) -> Result<Instruction, String> {
     }
 }
 
-fn decode_8xyn(x: u8, y: u8, n: u8) -> Result<Instruction, String> {
+fn decode_8xyn(x: usize, y: usize, n: u8) -> Result<Instruction, String> {
     match n {
         0x0 => Ok(Instruction {
             op1: Some(Operand::V(x)),
@@ -132,7 +132,7 @@ fn decode_8xyn(x: u8, y: u8, n: u8) -> Result<Instruction, String> {
     }
 }
 
-fn decode_read_keypress(x: u8, kk: u8) -> Result<Instruction, String> {
+fn decode_read_keypress(x: usize, kk: u8) -> Result<Instruction, String> {
     match kk {
         0x9e => Ok(Instruction {
             op1: Some(Operand::V(x)),
@@ -146,7 +146,7 @@ fn decode_read_keypress(x: u8, kk: u8) -> Result<Instruction, String> {
     }
 }
 
-fn decode_fxkk(x: u8, kk: u8) -> Result<Instruction, String> {
+fn decode_fxkk(x: usize, kk: u8) -> Result<Instruction, String> {
     match kk {
         0x07 => Ok(Instruction {
             op1: Some(Operand::V(x)),

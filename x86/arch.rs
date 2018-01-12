@@ -26,7 +26,7 @@ impl<'a> Analysis<State<'a>, Instruction> {
                 let prefix = {
                     let node = self.flow_graph.get_node_at(i).expect(
                         format!("instruction 0x{:x} has no node!", i).as_str());
-                    if node.insts[0] == i && node.label {
+                    if self.flow_graph.is_labelled(i) {
                         format!("{:4x}:   ", i)
                     } else {
                         format!("        ")

@@ -450,7 +450,7 @@ impl<'a> fmt::Display for State<'a> {
                 as usize;
             memory.push_str(format!("[{:x}] = {}\t", address - offset, value).as_str());
         };
-        return write!(f, "{}\n{}\n{}", line1, line2, memory);
+        write!(f, "{}\n{}\n{}", line1, line2, memory)
     }
 }
 

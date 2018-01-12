@@ -10,7 +10,7 @@ pub trait Architecture<S: StateTrait<S>, I: InstructionTrait> : Copy + Clone {
 }
 
 pub trait Context<S: StateTrait<S>, I: InstructionTrait> {
-    fn simulate_int(&self, state: S, inst: I) -> Option<S>;
+    fn simulate_system_call(&self, state: S, inst: I) -> Option<S>;
     fn entry_offset(&self, state: &S) -> usize;
     fn next_inst_offset(&self, state: &S) -> usize;
 }
@@ -35,7 +35,7 @@ pub struct Analysis<State: StateTrait<State>, Instruction: InstructionTrait> {
 pub enum SimResult<S: StateTrait<S>> {
     End,
     State(S),
-    Branch(Vec<S>)
+    Branch((Vec<S>, Vec<usize>))
 }
 
 pub fn get_word_le(buffer : &[u8], offset: usize) -> u16 {
@@ -215,14 +215,44 @@ impl Word {
         }
     }
 
-    pub fn compare(&self, word: u16) -> (bool, bool) {
+    pub fn compare(&self, word: &Word) -> (bool, bool) {
+        if let Word::Undefined = *self {
+            panic!("testing undefined word");
+        }
+        if let Word::Undefined = *word {
+            panic!("testing undefined word");
+        }
+        if let Word::Bytes(ref bytel, ref byteh) = *self {
+            return bytel.clone().combine(byteh.clone()).compare(word);
+        }
+        if let Word::Bytes(ref bytel, ref byteh) = *word {
+            return bytel.clone().combine(byteh.clone()).compare(self);
+        }
+        match *self {
+            Word::AnyValue => (true, false),
+            Word::Int(ref set1) => match *word {
+                Word::AnyValue => (true, true),
+                Word::Int(ref set2) => {
+                    let intersect = set1.intersection(set2).collect::<Vec<&u16>>().len();
+                    (intersect > 0, intersect > 1
+                        && (set1.len() != 1 || set2.len() != 1)
+                    )
+                },
+                _ => panic!("shouldn't be here")
+            },
+            _ => panic!("shouldn't be here")
+        }
+    }
+        
+
+    pub fn compare_u16(&self, word: u16) -> (bool, bool) {
         match *self {
             Word::Undefined => panic!("testing undefined word"),
             Word::AnyValue => (true, false),
             Word::Int(ref set) => (set.contains(&word),
                 set.contains(&word) || set.len() > 1),
             Word::Bytes(ref bytel, ref byteh) =>
-                bytel.clone().combine(byteh.clone()).compare(word)
+                bytel.clone().combine(byteh.clone()).compare_u16(word)
         }
     }
 }
@@ -379,7 +409,7 @@ impl Byte {
         }
     }
 
-    pub fn compare(&self, byte: u8) -> (bool, bool) {
+    pub fn compare_u8(&self, byte: u8) -> (bool, bool) {
         match *self {
             Byte::Undefined => panic!("testing undefined word"),
             Byte::AnyValue => (true, false),

@@ -1,5 +1,67 @@
 use defs::*;
+use chip8::dis;
+use chip8::sim;
+use chip8::state::{State};
 use std::fmt;
+
+#[derive(Copy, Clone)]
+pub struct Chip8 {
+}
+
+impl<'a> Architecture<State<'a>, Instruction> for Chip8 {
+    fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<Instruction, String> {
+        dis::decode_instruction(buffer, offset)
+    }
+
+    fn simulate_next_instruction<C: Context<State<'a>, Instruction>>(&self, state: State<'a>,
+        context: &C, instruction: Instruction) -> SimResult<State<'a>> {
+        sim::simulate_next_instruction(state, context, instruction)
+    }
+}
+
+impl<'a> Analysis<State<'a>, Instruction> {
+    pub fn print_instructions(&self) {
+        println!("{}", self.flow_graph);
+        let mut output = String::new();
+        for i in 0..0x1000 {
+            if let Some(instruction) = self.instructions.get(&i) {
+                let prefix = {
+                    let node = self.flow_graph.get_node_at(i).expect(
+                        format!("instruction 0x{:x} has no node!", i).as_str());
+                    if self.flow_graph.is_labelled(i) {
+                        format!("{:4x}:   ", i + 0x200)
+                    } else {
+                        format!("        ")
+                    }
+                };
+                output.push_str(format!("{}{}", prefix, instruction).as_str());
+                if i == 0x200 {
+                    output.push_str("\t; program entry point");
+                } else {
+                    output.push_str("\n");
+                }
+            }
+        }
+        println!("{}", output);
+    }
+}
+                
+pub struct Interpreter {
+}
+
+impl<'a> Context<State<'a>, Instruction> for Interpreter {
+    fn entry_offset(&self, state: &State<'a>) -> usize {
+        0
+    }
+
+    fn next_inst_offset(&self, state: &State<'a>) -> usize {
+        (state.pc - 0x200) as usize
+    }
+
+    fn simulate_system_call(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
+        panic!("Can't simluate system calls in interpreter");
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct Instruction {
@@ -59,13 +121,13 @@ impl fmt::Display for Instruction {
 #[derive(Copy, Clone, PartialEq)]
 pub enum Operand {
     I,
-    V(u8),
+    V(usize),
     Address(u16),
     Byte(u8),
     KeyPress,
     DelayTimer,
     SoundTimer,
-    Numeral(u8),
+    Numeral(usize),
     Pointer
 }
 

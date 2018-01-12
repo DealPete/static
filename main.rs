@@ -19,7 +19,7 @@ fn main() {
         let initial_state = context.initial_state(&buffer);
 
         let (analysis, error) = analyse::analyse(
-            buffer,
+            &buffer,
             initial_state,
             x86::arch::X86 {},
             &context

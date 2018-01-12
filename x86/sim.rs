@@ -5,10 +5,10 @@ use std::collections::HashSet;
 
 pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
     if instruction.mnemonic.is_branch() {
-        SimResult::Branch(branch(state, instruction))
+        SimResult::Branch(branch(state, instruction, context))
     } else if instruction.mnemonic == Mnemonic::INT {
         state.ip = state.ip.wrapping_add(instruction.length as u16);
-        match context.simulate_int(state, instruction) {
+        match context.simulate_system_call(state, instruction) {
             None => SimResult::End,
             Some(state) => SimResult::State(state)
         }
@@ -17,8 +17,9 @@ pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut sta
     }
 }
 
-fn branch<'a>(mut state: State<'a>, instruction: Instruction) -> Vec<State<'a>> {
+fn branch<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, instruction: Instruction, context: &C) -> (Vec<State<'a>>, Vec<usize>) {
     let mut new_states = Vec::new();
+    let mut new_labels = Vec::new();
 
     if instruction.mnemonic == Mnemonic::RET {
         let (state, word) = pop_word(state);
@@ -34,7 +35,7 @@ fn branch<'a>(mut state: State<'a>, instruction: Instruction) -> Vec<State<'a>> 
             },
             _ => panic!("Unsupported return type.")
         };
-        return new_states;
+        return (new_states, new_labels);
     }
 
     let offsets: Vec<u16> = if instruction.op1 == None {
@@ -77,7 +78,7 @@ fn branch<'a>(mut state: State<'a>, instruction: Instruction) -> Vec<State<'a>> 
 
         let cx = state.get_reg16(Register::CX);
 
-        let (can, must) = cx.compare(0);
+        let (can, must) = cx.compare_u16(0);
         jump = !must;
         cont = can;
         flag = None;
@@ -109,6 +110,7 @@ fn branch<'a>(mut state: State<'a>, instruction: Instruction) -> Vec<State<'a>> 
                 new_state = push_word(new_state, return_address);
             }
             new_state.ip = new_state.ip.wrapping_add(offset as u16);
+            new_labels.push(context.next_inst_offset(&new_state));
             new_states.push(
                 match flag {
                     Some((flag_to_check, truth_value)) =>
@@ -133,7 +135,7 @@ fn branch<'a>(mut state: State<'a>, instruction: Instruction) -> Vec<State<'a>> 
         );
     }
 
-    new_states
+    (new_states, new_labels)
 }
 
 fn simulate_instruction<'a>(mut state: State<'a>, inst: Instruction) -> State<'a> {

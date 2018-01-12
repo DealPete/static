@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 pub struct FlowGraph<S: StateTrait<S>> {
+    labels: HashSet<usize>,
     nodes: Vec<Node>,
     edges: Vec<Edge<S>>,
     inst_map: HashMap<usize, usize>
@@ -52,14 +53,15 @@ impl<S: StateTrait<S>> fmt::Display for FlowGraph<S> {
 impl<S: StateTrait<S>> FlowGraph<S> {
     pub fn new() -> FlowGraph<S> {
         FlowGraph {
+            labels: HashSet::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
             inst_map: HashMap::new()
         }
     }
 
-    pub fn add_node_at(&mut self, offset: usize, label: bool) -> usize {
-        let mut node = Node::new(label);
+    pub fn add_node_at(&mut self, offset: usize) -> usize {
+        let mut node = Node::new();
         node.insts.push(offset);
         self.nodes.push(node);
         self.inst_map.insert(offset, self.nodes.len() - 1);
@@ -116,7 +118,15 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         self.nodes[node_index].insts.push(inst_offset);
     }
 
-    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize, needs_label: bool) -> Option<usize> {
+    pub fn add_label(&mut self, label_offset: usize) {
+        self.labels.insert(label_offset);
+    }
+
+    pub fn is_labelled(&self, label_offset: usize) -> bool {
+        self.labels.contains(&label_offset)
+    }
+
+    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize) -> Option<usize> {
         match self.nodes[node_index].insts.iter().position(|&r| r == inst_offset) {
             None => panic!("can't find offset to split at in node {}, instruction 0x{:x}.", node_index, inst_offset),
             Some(index) => {
@@ -124,7 +134,7 @@ impl<S: StateTrait<S>> FlowGraph<S> {
                     return None;
                 }
 
-                let mut new_node = Node::new(needs_label);
+                let mut new_node = Node::new();
                 let new_node_index = self.nodes.len();
 
                 new_node.insts = self.nodes[node_index].insts.split_off(index);
@@ -147,19 +157,64 @@ impl<S: StateTrait<S>> FlowGraph<S> {
             }
         }
     }
+
+    pub fn extend_with_state(inst_offset: usize, new_inst_offset: usize, new_state: S) -> bool {
+        let mut state_live = true;
+
+        let node_index = self.get_node_index_at(inst_offset)
+            .expect("No node at instruction offset");
+        match self.get_node_index_at(new_inst_offset) {
+            None => {
+                let new_node_index = self.add_node_at(new_inst_offset);
+                self.add_edge(node_index, new_node_index, Some(new_state));
+            },
+            Some(new_node_index) => {
+                match self.split_node_at(new_node_index, new_inst_offset) {
+                    None => {
+                        match self.has_edge(node_index, new_node_index) {
+                            false => {
+                                self.add_edge(node_index, new_node_index, Some(new_state));
+                            },
+                            true => {
+                                let mut new_edge_state = None;
+                                let mut edge = self.get_edge_mut(node_index, new_node_index)
+                                    .expect("Shouldn't be here");
+                                match edge.state {
+                                    None => {
+                                        new_edge_state = Some(new_state);
+                                    },
+                                    Some(ref edge_state) => {
+                                        if !new_state.is_subset(&edge_state) {
+                                            new_edge_state = Some(new_state.union(edge_state.clone()));
+                                        } else {
+                                            state_live = false;
+                                        }
+                                    }
+                                }
+                                edge.state = new_edge_state;
+                            }
+                        }
+                    },
+                    Some(split_node_index) => {
+                        self.add_edge(node_index, split_node_index, Some(new_state));
+                    }
+                }
+            }
+        };
+
+        state_live
+    }
 }
 
 pub struct Node {
-    pub label: bool,
     pub insts: Vec<usize>,
     pub inbound_edges: HashSet<usize>,
     pub outbound_edges: HashSet<usize>,
 }
 
 impl Node {
-    fn new(label: bool) -> Node {
+    fn new() -> Node {
         Node {
-            label: label,
             insts: Vec::new(),
             inbound_edges: HashSet::new(),
             outbound_edges: HashSet::new()
