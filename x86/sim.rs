@@ -4,6 +4,7 @@ use x86::arch::*;
 use std::collections::HashSet;
 
 pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
+    println!("{}", instruction);
     if instruction.mnemonic.is_branch() {
         SimResult::Branch(branch(state, instruction, context))
     } else if instruction.mnemonic == Mnemonic::INT {

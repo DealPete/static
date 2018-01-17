@@ -7,6 +7,7 @@ use std::ops::Add;
 pub trait Architecture<S: StateTrait<S>, I: InstructionTrait> : Copy + Clone {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<I, String>;
     fn simulate_next_instruction<C: Context<S, I>>(&self, state: S, context: &C, instruction: I) -> SimResult<S>;
+    fn successors(&self, instruction: I, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
 }
 
 pub trait Context<S: StateTrait<S>, I: InstructionTrait> {
@@ -43,7 +44,7 @@ pub fn get_word_le(buffer : &[u8], offset: usize) -> u16 {
     (word << 8) + buffer[offset] as u16
 }
 
-pub fn get_word_be(buffer: &[u8], offset: usize) -> u16 {
+pub fn get_word_be(buffer : &[u8], offset: usize) -> u16 {
     let word = buffer[offset] as u16;
     (word << 8) + buffer[offset + 1] as u16
 }
@@ -62,6 +63,93 @@ pub fn add_rel16(address: usize, rel: i16) -> usize {
     } else {
         address + (rel as usize)
     }
+}
+
+#[derive(Clone)]
+pub struct Memory<'a> {
+    load_offset: usize,
+    endian: Endian,
+    base: &'a [u8],
+    deltas: HashMap<usize, Value>
+}
+
+impl<'a> Memory<'a> {
+    pub fn new(buffer: &'a [u8], load_offset: usize, endian: Endian) -> Memory<'a> {
+        Memory {
+            load_offset: load_offset,
+            endian: endian,
+            base: buffer,
+            deltas: HashMap::new()
+        }
+    }
+
+    pub fn union(mut self, memory: Memory<'a>) -> Memory<'a> {
+        for (offset, value) in memory.deltas {
+            match self.deltas.remove(&offset) {
+                None => self.deltas.insert(offset, value),
+                Some(memory_value) =>
+                    self.deltas.insert(offset, memory_value.union(value))
+            };
+        }
+        self
+    }
+
+    pub fn is_subset(&self, memory: &Memory<'a>) -> bool {
+        for (offset, value1) in self.deltas.iter() {
+            match memory.deltas.get(&offset) {
+                None => return false,
+                Some(ref value2) => if !value1.is_subset(value2) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    pub fn get_word(&self, location: usize) -> Word {
+        match self.deltas.get(&location) {
+            None => match self.endian {
+                Endian::Little => Word::new(get_word_le(self.base, location - self.load_offset)),
+                Endian::Big => Word::new(get_word_be(self.base, location - self.load_offset)),
+            },
+            Some(value) => match value {
+                &Value::Byte(_) => panic!("Can't read non-word as word from memory."),
+                &Value::Word(ref new_word) => new_word.clone()
+            }
+        }
+    }
+
+    pub fn get_byte(&self, location: usize) -> Byte {
+        match self.deltas.get(&location) {
+            None => Byte::new(self.base[location - self.load_offset]),
+            Some(value) => match value {
+                &Value::Byte(ref new_byte) => new_byte.clone(),
+                _ => panic!("Can't read non-byte as byte from memory.")
+            }
+        }
+    }
+
+    pub fn write_value(&mut self, location: usize, value: Value) {
+        self.deltas.insert(location - self.load_offset, value);
+    }
+
+    pub fn write_string(&mut self, location: usize, string: &[Byte]) {
+        let lower_bound = location - self.load_offset;
+        for i in 0..string.len() {
+            self.deltas.insert(lower_bound + i, Value::Byte(string[i].clone()));
+        }
+    }
+
+    pub fn get_deltas(&self) -> &HashMap<usize, Value> {
+        &self.deltas
+    }
+}
+
+#[derive(Copy, Clone)]
+pub enum Endian {
+    Little,
+    Big
 }
 
 #[derive(Clone)]
@@ -122,6 +210,14 @@ impl Word {
         Word::Int(word_set)
     }
 
+    pub fn from_vec(vector: Vec<u16>) -> Word {
+        let mut word_set = HashSet::new();
+        for word in vector {
+            word_set.insert(word);
+        }
+        Word::Int(word_set)
+    }
+
     pub fn union(self, word: Word) -> Word {
         if let Word::Bytes(byte1, byte2) = word {
             Word::Bytes(byte1.union(self.split_low()),
@@ -172,6 +268,16 @@ impl Word {
         }
     }
 
+    pub fn len(&self) -> usize {
+        match *self {
+            Word::Undefined => panic!("taking the length of undefined word."),
+            Word::AnyValue => 65536,
+            Word::Int(ref words) => words.len(),
+            Word::Bytes(ref bytel, ref byteh) =>
+                bytel.clone().combine(byteh.clone()).len()
+        }
+    }
+
     pub fn split_low(&self) -> Byte {
         match *self {
             Word::Undefined => Byte::Undefined,
@@ -215,7 +321,60 @@ impl Word {
         }
     }
 
-    pub fn compare(&self, word: &Word) -> (bool, bool) {
+    pub fn intersect(&self, word: &Word) -> Word {
+        if let Word::Undefined = *self {
+            panic!("intersecting undefined word");
+        }
+        if let Word::Undefined = *word {
+            panic!("intersecting undefined word");
+        }
+        if let Word::Bytes(ref bytel, ref byteh) = *self {
+            return bytel.clone().combine(byteh.clone()).intersect(word);
+        }
+        if let Word::Bytes(ref bytel, ref byteh) = *word {
+            return bytel.clone().combine(byteh.clone()).intersect(self);
+        }
+        match *self {
+            Word::AnyValue => word.clone(),
+            Word::Int(ref set1) => match *word {
+                Word::AnyValue => self.clone(),
+                Word::Int(ref set2) =>
+                    Word::Int(set1.intersection(set2).cloned().collect::<HashSet<u16>>()),
+                _ => panic!("shouldn't be here")
+            },
+            _ => panic!("shouldn't be here")
+        }
+    }
+
+    pub fn difference(&self, word: Word) -> Word {
+        if let Word::Undefined = *self {
+            panic!("set difference with undefined word");
+        }
+        if let Word::Undefined = word {
+            panic!("set difference with undefined word");
+        }
+        if let Word::Bytes(ref bytel, ref byteh) = *self {
+            return bytel.clone().combine(byteh.clone()).difference(word);
+        }
+        if let Word::Bytes(ref bytel, ref byteh) = word {
+            return self.difference(bytel.clone().combine(byteh.clone()));
+        }
+        match *self {
+            Word::AnyValue => match word {
+                Word::AnyValue => Word::Int(HashSet::new()),
+                _ => Word::AnyValue
+            },
+            Word::Int(ref set1) => match word {
+                Word::AnyValue => Word::Int(HashSet::new()),
+                Word::Int(ref set2) =>
+                    Word::Int(set1.difference(&set2).cloned().collect::<HashSet<u16>>()),
+                _ => panic!("shouldn't be here")
+            },
+            _ => panic!("shouldn't be here")
+        }
+    }
+
+    /*pub fn compare(&self, word: &Word) -> (bool, bool) {
         if let Word::Undefined = *self {
             panic!("testing undefined word");
         }
@@ -242,8 +401,7 @@ impl Word {
             },
             _ => panic!("shouldn't be here")
         }
-    }
-        
+    }*/
 
     pub fn compare_u16(&self, word: u16) -> (bool, bool) {
         match *self {
@@ -253,6 +411,23 @@ impl Word {
                 set.contains(&word) || set.len() > 1),
             Word::Bytes(ref bytel, ref byteh) =>
                 bytel.clone().combine(byteh.clone()).compare_u16(word)
+        }
+    }
+}
+
+impl fmt::Debug for Word {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Word::Undefined => write!(f, "Undefined"),
+            Word::AnyValue => write!(f, "AnyValue"),
+            Word::Int(ref set) => {
+                let mut output = String::new();
+                for word in set.iter() {
+                    output.push_str(format!(" {:x}", word).as_str());
+                }
+                write!(f, "[{} ]", output)
+            },
+            Word::Bytes(_, _) => write!(f, "two bytes")
         }
     }
 }
@@ -323,6 +498,22 @@ impl Byte {
         let mut byte_set = HashSet::new();
         byte_set.insert(byte);
         Byte::Int(byte_set)
+    }
+
+    pub fn from_vec(vector: Vec<u8>) -> Byte {
+        let mut set = HashSet::new();
+        for byte in vector {
+            set.insert(byte);
+        }
+        Byte::Int(set)
+    }
+
+    pub fn len(&self) -> usize {
+        match *self {
+            Byte::Undefined => panic!("taking the length of undefined byte."),
+            Byte::AnyValue => 256,
+            Byte::Int(ref bytes) => bytes.len(),
+        }
     }
 
     pub fn to_word(self) -> Word {
@@ -401,9 +592,50 @@ impl Byte {
         }
     }
 
+    pub fn intersect(&self, byte: &Byte) -> Byte {
+        if let Byte::Undefined = *self {
+            panic!("intersecting undefined byte");
+        }
+        if let Byte::Undefined = *byte {
+            panic!("intersecting undefined byte");
+        }
+        match *self {
+            Byte::AnyValue => byte.clone(),
+            Byte::Int(ref set1) => match *byte {
+                Byte::AnyValue => self.clone(),
+                Byte::Int(ref set2) =>
+                    Byte::Int(set1.intersection(set2).cloned().collect::<HashSet<u8>>()),
+                _ => panic!("shouldn't be here")
+            },
+            _ => panic!("shouldn't be here")
+        }
+    }
+
+    pub fn difference(&self, byte: Byte) -> Byte {
+        if let Byte::Undefined = *self {
+            panic!("set difference with undefined byte");
+        }
+        if let Byte::Undefined = byte {
+            panic!("set difference with undefined byte");
+        }
+        match *self {
+            Byte::AnyValue => match byte {
+                Byte::AnyValue => Byte::Int(HashSet::new()),
+                _ => Byte::AnyValue
+            },
+            Byte::Int(ref set1) => match byte {
+                Byte::AnyValue => Byte::Int(HashSet::new()),
+                Byte::Int(ref set2) =>
+                    Byte::Int(set1.difference(&set2).cloned().collect::<HashSet<u8>>()),
+                _ => panic!("shouldn't be here")
+            },
+            _ => panic!("shouldn't be here")
+        }
+    }
+
     pub fn can_be(&self, byte: u8) -> bool {
         match *self {
-            Byte::Undefined => panic!("testing undefined word"),
+            Byte::Undefined => panic!("testing undefined byte"),
             Byte::AnyValue => true,
             Byte::Int(ref set) => set.contains(&byte),
         }

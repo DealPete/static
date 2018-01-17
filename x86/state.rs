@@ -2,7 +2,6 @@ use defs::*;
 use x86::arch::*;
 use x86::dos::LoadModule;
 use std::fmt;
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 #[derive(Clone)]
@@ -11,8 +10,7 @@ pub struct State<'a> {
     pub ip : u16,
     regs : Registers,
     flags : Flags,
-    pub load_module : &'a LoadModule,
-    memory : HashMap<usize, Value>
+    memory : Memory<'a>
 }
 
 impl<'a> StateTrait<State<'a>> for State<'a> {
@@ -27,33 +25,12 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
             ip: self.ip,
             regs: self.regs.union(state.regs),
             flags: self.flags.union(state.flags),
-            load_module: state.load_module,
-            memory: {
-                let mut new_memory = HashMap::new();
-                for (offset, value) in self.memory.iter() {
-                    new_memory.insert(*offset, value.clone());
-                }
-                for (offset, value) in state.memory.iter() {
-                    match self.memory.get(offset) {
-                        None => new_memory.insert(*offset, value.clone()),
-                        Some(memory) =>
-                            new_memory.insert(*offset, memory.clone().union(value.clone()))
-                    };
-                }
-                new_memory
-            }
+            memory: self.memory.union(state.memory)
         }
     }
 
     fn is_subset(&self, state: &State<'a>) -> bool {
-        for (offset, value1) in self.memory.iter() {
-            match state.memory.get(&offset) {
-                None => return false,
-                Some(ref value2) => if !value1.is_subset(value2) {
-                    return false;
-                }
-            }
-        };
+        self.memory.is_subset(&state.memory) &&
         self.cs == state.cs &&
         self.ip == state.ip &&
         self.regs.is_subset(&state.regs) &&
@@ -68,8 +45,9 @@ impl<'a> State<'a> {
             ip : 0,
             regs : Registers::new(),
             flags : Flags::new(),
-            load_module: load_module,
-            memory : HashMap::new()
+            memory : Memory::new(&load_module.buffer,
+                16 * load_module.memory_segment as usize,
+                Endian::Little)
         }
     }
     
@@ -362,15 +340,7 @@ impl<'a> State<'a> {
         for segment in segments {
             for offset in offsets.iter() {
                 let location = 16*(segment as usize) + *offset as usize;
-                byte = byte.union(match self.memory.get(&location) {
-                    Some(value) => match value {
-                        &Value::Byte(ref new_byte) => new_byte.clone(),
-                        &Value::Word(_) => panic!("Can't read byte from word in memory.")
-                    },
-                    None => Byte::new(self.load_module.buffer[
-                        location - 16*(self.load_module.memory_segment as usize)
-                    ])
-                });
+                byte = byte.union(self.memory.get_byte(location));
             }
         }
         byte
@@ -381,37 +351,25 @@ impl<'a> State<'a> {
         for segment in segments {
             for offset in offsets.iter() {
                 let location = 16*(segment as usize) + *offset as usize;
-                word = word.union(match self.memory.get(&location) {
-                    Some(value) => match value {
-                        &Value::Byte(_) => panic!("Can't read word from byte in memory."),
-                        &Value::Word(ref new_word) => new_word.clone(),
-                    },
-                    None => {
-                        let offset = location - 16*(self.load_module.memory_segment as usize);
-                        Word::new(get_word_le(&self.load_module.buffer, offset))
-                    }
-                });
+                word = word.union(self.memory.get_word(location))
             }
         }
         word
     }
 
-    fn write_memory(self, segments: HashSet<u16>, offsets: HashSet<u16>, value: Value) -> State<'a> {
+    fn write_memory(mut self, segments: HashSet<u16>, offsets: HashSet<u16>, value: Value) -> State<'a> {
         if segments.len() > 1 || offsets.len() > 1 {
             println!("{}", &self);
             panic!("writing to nondeterministic memory location no yet supported.");
         };
-        let mut new_memory = self.memory.clone();
         for segment in segments {
             for offset in offsets.iter() {
                 let location = 16*(segment as usize) + *offset as usize;
-                new_memory.insert(location, value.clone());
+                self.memory.write_value(location, value.clone());
             }
         };
-        State {
-            memory: new_memory,
-            .. self
-        }
+
+        self
     }
 
     fn pointer_offset(&self, ptr_type: PtrType) -> Word {
@@ -444,15 +402,16 @@ impl<'a> fmt::Display for State<'a> {
         let line2 = format!("DS={}  ES={}  SS={}  CS={:04x}  IP={:04x}  {}",
             regs.ds, regs.es, regs.ss, self.cs, self.ip, self.flags);
         let mut memory = String::new();
-        for (address, value) in self.memory.iter() {
+        for (address, value) in self.memory.get_deltas() {
             let offset = 16 * self.unpack_reg16(Register::DS)
-                .expect("Undeterministic DS not support for displaying memory.")
+                .expect("Undeterministic DS not supported for displaying memory.")
                 as usize;
             memory.push_str(format!("[{:x}] = {}\t", address - offset, value).as_str());
         };
         write!(f, "{}\n{}\n{}", line1, line2, memory)
     }
 }
+
 
 #[derive(Clone)]
 pub struct Registers {

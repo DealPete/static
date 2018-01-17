@@ -18,7 +18,7 @@ fn main() {
         let context = chip8::arch::Interpreter {};
         let initial_state = chip8::state::State::new(&buffer);
 
-        let (analysis, error) = analyse::analyse(
+        let analysis = analyse::recursive_descent(
             &buffer,
             initial_state,
             chip8::arch::Chip8 {},
@@ -26,9 +26,9 @@ fn main() {
         );
 
         analysis.print_instructions();
-        if let Some(message) = error {
+        /*if let Some(message) = error {
             println!("{}", message);
-        }
+        }*/
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }

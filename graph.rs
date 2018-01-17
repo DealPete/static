@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 pub struct FlowGraph<S: StateTrait<S>> {
     labels: HashSet<usize>,
-    nodes: Vec<Node>,
-    edges: Vec<Edge<S>>,
+    nodes: Vec<Node<S>>,
+    edges: Vec<Edge>,
     inst_map: HashMap<usize, usize>
 }
 
@@ -35,13 +35,8 @@ impl<S: StateTrait<S>> fmt::Display for FlowGraph<S> {
                     outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
                 }
                 output.push_str(format!("Outbound nodes: {}\n", outbound).as_str());
-                for edge in node.outbound_edges.iter() {
-                    if let Some(ref state) = self.edges[*edge].state {
-                        output.push_str(
-                            format!("Edge {}--{} state:\n=================\n{}\n ",
-                            self.edges[*edge].from, self.edges[*edge].to, state).as_str()
-                        );
-                    }
+                if let Some(ref state) = node.state {
+                    output.push_str(format!("state:\n=================\n{}\n ", state).as_str());
                 }
             }
             output.push_str("\n"); 
@@ -60,8 +55,8 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         }
     }
 
-    pub fn add_node_at(&mut self, offset: usize) -> usize {
-        let mut node = Node::new();
+    pub fn add_node_at(&mut self, offset: usize, state: S) -> usize {
+        let mut node = Node::new(Some(state));
         node.insts.push(offset);
         self.nodes.push(node);
         self.inst_map.insert(offset, self.nodes.len() - 1);
@@ -75,21 +70,19 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         }
     }
 
-    pub fn get_node_at(&self, offset: usize) -> Option<&Node> {
+    pub fn get_node_at(&self, offset: usize) -> Option<&Node<S>> {
         match self.inst_map.get(&offset) {
             None => None,
             Some(index) => Some(&self.nodes[*index])
         }
     }
 
-    pub fn get_edge_mut(&mut self, source: usize, target: usize) -> Option<&mut Edge<S>> {
-        for out in self.nodes[source].outbound_edges.iter() {
-            if self.edges[*out].to == target {
-                return Some(&mut self.edges[*out])
-            }
-        }
-
-        None
+    pub fn get_state_at(&self, index: usize) -> Option<S> {
+        self.nodes[index].state.clone()
+    }
+    
+    pub fn set_state_at(&mut self, index: usize, state: S) {
+        self.nodes[index].state = Some(state);
     }
 
     pub fn has_edge(&self, source: usize, target: usize) -> bool {
@@ -102,14 +95,11 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         false
     }
 
-    pub fn add_edge(&mut self, source: usize, target: usize, state: Option<S>) {
-        match self.has_edge(source, target) {
-            true => panic!("trying to add duplicate edge."),
-            false => {
-                self.nodes[source].outbound_edges.insert(self.edges.len());
-                self.nodes[target].inbound_edges.insert(self.edges.len());
-                self.edges.push(Edge::new(source, target, state));
-            }
+    pub fn add_edge(&mut self, source: usize, target: usize) {
+        if !self.has_edge(source, target) {
+            self.nodes[source].outbound_edges.insert(self.edges.len());
+            self.nodes[target].inbound_edges.insert(self.edges.len());
+            self.edges.push(Edge::new(source, target));
         }
     }
     
@@ -134,7 +124,7 @@ impl<S: StateTrait<S>> FlowGraph<S> {
                     return None;
                 }
 
-                let mut new_node = Node::new();
+                let mut new_node = Node::new(None);
                 let new_node_index = self.nodes.len();
 
                 new_node.insts = self.nodes[node_index].insts.split_off(index);
@@ -147,7 +137,7 @@ impl<S: StateTrait<S>> FlowGraph<S> {
 
                 self.nodes[node_index].outbound_edges = self.nodes[new_node_index].outbound_edges.clone();
                 self.nodes[new_node_index].outbound_edges.clear();
-                self.add_edge(new_node_index, node_index, None);
+                self.add_edge(new_node_index, node_index);
 
                 for inst in self.nodes[new_node_index].insts.iter() {
                     self.inst_map.insert(*inst, new_node_index);
@@ -158,63 +148,56 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         }
     }
 
-    pub fn extend_with_state(inst_offset: usize, new_inst_offset: usize, new_state: S) -> bool {
-        let mut state_live = true;
+    pub fn extend_with_state(&mut self, inst_offset: usize, new_inst_offset: usize, state: S) -> Option<S> {
+        let mut new_state = Some(state.clone());
 
         let node_index = self.get_node_index_at(inst_offset)
             .expect("No node at instruction offset");
         match self.get_node_index_at(new_inst_offset) {
             None => {
-                let new_node_index = self.add_node_at(new_inst_offset);
-                self.add_edge(node_index, new_node_index, Some(new_state));
+                let new_node_index = self.add_node_at(new_inst_offset, state);
+                self.add_edge(node_index, new_node_index);
             },
             Some(new_node_index) => {
                 match self.split_node_at(new_node_index, new_inst_offset) {
                     None => {
-                        match self.has_edge(node_index, new_node_index) {
-                            false => {
-                                self.add_edge(node_index, new_node_index, Some(new_state));
-                            },
-                            true => {
-                                let mut new_edge_state = None;
-                                let mut edge = self.get_edge_mut(node_index, new_node_index)
-                                    .expect("Shouldn't be here");
-                                match edge.state {
-                                    None => {
-                                        new_edge_state = Some(new_state);
-                                    },
-                                    Some(ref edge_state) => {
-                                        if !new_state.is_subset(&edge_state) {
-                                            new_edge_state = Some(new_state.union(edge_state.clone()));
-                                        } else {
-                                            state_live = false;
-                                        }
-                                    }
+                        self.add_edge(node_index, new_node_index);
+                        match self.get_state_at(new_node_index) {
+                            None => self.set_state_at(new_node_index, state),
+                            Some(node_state) => {
+                                if !state.is_subset(&node_state) {
+                                    let combined_state = state.union(node_state);
+                                    self.set_state_at(new_node_index, combined_state.clone());
+                                    new_state = Some(combined_state);
+                                } else {
+                                    new_state = None;
                                 }
-                                edge.state = new_edge_state;
                             }
                         }
                     },
                     Some(split_node_index) => {
-                        self.add_edge(node_index, split_node_index, Some(new_state));
+                        self.add_edge(node_index, split_node_index);
+                        self.set_state_at(new_node_index, state);
                     }
                 }
             }
         };
 
-        state_live
+        new_state
     }
 }
 
-pub struct Node {
+pub struct Node<S: StateTrait<S>> {
+    pub state: Option<S>,
     pub insts: Vec<usize>,
     pub inbound_edges: HashSet<usize>,
-    pub outbound_edges: HashSet<usize>,
+    pub outbound_edges: HashSet<usize>
 }
 
-impl Node {
-    fn new() -> Node {
+impl<S: StateTrait<S>> Node<S> {
+    fn new(state: Option<S>) -> Node<S> {
         Node {
+            state: state,
             insts: Vec::new(),
             inbound_edges: HashSet::new(),
             outbound_edges: HashSet::new()
@@ -222,18 +205,16 @@ impl Node {
     }
 }
 
-struct Edge<S: StateTrait<S>> {
+struct Edge {
     from: usize,
-    to: usize,
-    pub state: Option<S>
+    to: usize
 }
 
-impl<S: StateTrait<S>> Edge<S> {
-    fn new(from_node_index: usize, to_node_index: usize, state: Option<S>) -> Edge<S> {
+impl Edge {
+    fn new(from_node_index: usize, to_node_index: usize) -> Edge {
         Edge {
             from: from_node_index,
-            to: to_node_index,
-            state: state
+            to: to_node_index
         }
     }
 

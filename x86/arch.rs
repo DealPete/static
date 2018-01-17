@@ -16,6 +16,10 @@ impl<'a> Architecture<State<'a>, Instruction> for X86 {
     fn simulate_next_instruction<C: Context<State<'a>, Instruction>>(&self, state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
         sim::simulate_next_instruction(state, context, instruction)
     }
+
+    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+        panic!("successors not supported for x86")
+    }
 }
 
 impl<'a> Analysis<State<'a>, Instruction> {

@@ -17,17 +17,34 @@ impl<'a> Architecture<State<'a>, Instruction> for Chip8 {
         context: &C, instruction: Instruction) -> SimResult<State<'a>> {
         sim::simulate_next_instruction(state, context, instruction)
     }
+
+    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+        match instruction.mnemonic {
+            Mnemonic::CALL => match instruction.unpack_op1() {
+                Operand::Address(address) =>
+                    (vec!(address as usize - 0x200, offset + 2), vec!(address as usize - 0x200), false),
+                _ => panic!("CALL instruction should have address as operand.")
+            },
+            Mnemonic::JP => match instruction.unpack_op1() {
+                Operand::Address(address) =>
+                    (vec!(address as usize - 0x200), vec!(address as usize - 0x200),
+                    false),
+                _ => (Vec::new(), Vec::new(), true)
+            },
+            Mnemonic::RET => (Vec::new(), Vec::new(), false),
+            Mnemonic::SE | Mnemonic::SNE | Mnemonic::SKP | Mnemonic::SKNP =>
+                (vec!(offset + 2, offset + 4), Vec::new(), false),
+            _ => (vec!(offset + 2), Vec::new(), false)
+        }
+    }
 }
 
 impl<'a> Analysis<State<'a>, Instruction> {
     pub fn print_instructions(&self) {
-        println!("{}", self.flow_graph);
         let mut output = String::new();
         for i in 0..0x1000 {
             if let Some(instruction) = self.instructions.get(&i) {
                 let prefix = {
-                    let node = self.flow_graph.get_node_at(i).expect(
-                        format!("instruction 0x{:x} has no node!", i).as_str());
                     if self.flow_graph.is_labelled(i) {
                         format!("{:4x}:   ", i + 0x200)
                     } else {
@@ -39,6 +56,13 @@ impl<'a> Analysis<State<'a>, Instruction> {
                     output.push_str("\t; program entry point");
                 } else {
                     output.push_str("\n");
+                }
+                if instruction.mnemonic == Mnemonic::SE
+                    || instruction.mnemonic == Mnemonic::SNE {
+                    output.push_str("    ");
+                    if let None = self.instructions.get(&(i+2)) {
+                        output.push_str("        ????\n");
+                    }
                 }
             }
         }

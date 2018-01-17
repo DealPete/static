@@ -2,6 +2,52 @@ use defs::*;
 use graph;
 use std::collections::HashMap;
 
+pub fn recursive_descent<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: Context<S, I>>(file_buffer: &Vec<u8>, initial_state: S, architecture: A, context: &C) -> Analysis<S, I> {
+    let entry_offset = context.entry_offset(&initial_state);
+
+    let mut analysis = Analysis {
+        entry_offset: entry_offset,
+        highest_offset: entry_offset,
+        flow_graph: graph::FlowGraph::new(),
+        instructions: HashMap::<usize, I>::new(),
+    };
+
+    let mut indeterminates = Vec::new();
+    let mut unexplored = Vec::new();
+    unexplored.push(entry_offset);
+
+    while let Some(offset) = unexplored.pop() {
+        if let None = analysis.instructions.get(&offset) {
+            let inst = match architecture.decode_instruction(file_buffer, offset) {
+                Ok(instruction) => instruction,
+                Err(err) => panic!(err)
+            };
+
+            let (addresses, labels, indeterminate) = architecture.successors(inst, offset);
+
+            for address in addresses {
+                unexplored.push(address);
+            }
+
+            for label in labels {
+                analysis.flow_graph.add_label(label);
+            }
+
+            if indeterminate {
+                indeterminates.push(offset);
+            }
+
+            if offset > analysis.highest_offset {
+                analysis.highest_offset = offset
+            }
+
+            analysis.instructions.insert(offset, inst);
+        }
+    }
+
+    analysis
+}
+
 pub fn analyse<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: Context<S, I>>(file_buffer: &Vec<u8>, initial_state: S, architecture: A, context: &C) -> (Analysis<S, I>, Option<String>) {
     let entry_offset = context.entry_offset(&initial_state);
 
@@ -12,20 +58,19 @@ pub fn analyse<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: 
         instructions: HashMap::<usize, I>::new(),
     };
 
-    analysis.flow_graph.add_node_at(entry_offset);
+    analysis.flow_graph.add_node_at(entry_offset, initial_state.clone());
     analysis.flow_graph.add_label(entry_offset);
 
     let mut live_states = Vec::new();
     live_states.push(initial_state.clone());
 
     while let Some(state) = live_states.pop() {
+        println!("{}", state);
         let inst_offset = context.next_inst_offset(&state);
         let inst = match analysis.instructions.get(&inst_offset) {
             None => match architecture.decode_instruction(file_buffer, inst_offset) {
                 Ok(instruction) => instruction,
-                Err(err) => {
-                   panic!(err);
-                }
+                Err(err) => panic!(err)
             },
             Some(instruction) => *instruction
         };
@@ -45,7 +90,7 @@ pub fn analyse<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: 
                         if node_index == next_inst_node_index {
                             live_states.push(next_state);
                         } else {
-                            if analysis.flow_graph.extend_with_state(inst_offset, context.next_inst_offset(&next_state), next_state.clone()) {
+                            if let Some(next_state) = analysis.flow_graph.extend_with_state(inst_offset, context.next_inst_offset(&next_state), next_state.clone()) {
                                 live_states.push(next_state);
                             }
                         }
@@ -57,12 +102,10 @@ pub fn analyse<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: 
                     analysis.flow_graph.add_label(new_label);
                 }
                 for new_state in new_states {
-                    if analysis.flow_graph.extend_with_state(inst_offset, context.next_inst_offset(&new_state), new_state.clone()) {
-                        //println!("inst_offset = {}, next_inst_offset = {}, new state:\n{}", inst_offset, context.next_inst_offset(&new_state), new_state);
+                    if let Some(new_state) = analysis.flow_graph.extend_with_state(inst_offset, context.next_inst_offset(&new_state), new_state.clone()) {
                         live_states.push(new_state);
                     }
                 }
-                println!("live states len: {}", live_states.len());
             }
         }
 
