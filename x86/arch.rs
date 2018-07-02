@@ -17,8 +17,26 @@ impl<'a> Architecture<State<'a>, Instruction> for X86 {
         sim::simulate_next_instruction(state, context, instruction)
     }
 
-    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
-        panic!("successors not supported for x86")
+    fn naive_successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+        println!("{}", instruction);
+        match instruction.mnemonic {
+            Mnemonic::JMP => (Vec::new(), Vec::new(), true),
+            Mnemonic::RET => (Vec::new(), Vec::new(), false),
+            Mnemonic::INT => match instruction.unpack_op1() {
+                Operand::Imm8(0x20) =>
+                    (Vec::new(), Vec::new(), false),
+                Operand::Imm8(0x21) =>
+                    (Vec::new(), Vec::new(), true),
+                _ => panic!("unexpected INT function")
+            },
+            _ => (vec!(offset + instruction.length as usize), Vec::new(), false)
+        }
+    }
+
+    fn true_successors(&self, analysis: Analysis<State<'a>, Instruction>, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+        // unimplemented
+
+        (Vec::new(), Vec::new(), true)
     }
 }
 

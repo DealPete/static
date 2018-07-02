@@ -60,6 +60,7 @@ impl<'a> State<'a> {
                 //self.delay_timer.clone(),
             Operand::SoundTimer => Byte::AnyValue,
                 //self.sound_timer.clone(),
+            Operand::Numeral(_) => Byte::Undefined,
             _ => panic!("unimplemented byte type.")
         }
     }
@@ -87,6 +88,7 @@ impl<'a> State<'a> {
             },
             Operand::DelayTimer => State { delay_timer: byte, .. self },
             Operand::SoundTimer => State { sound_timer: byte, .. self },
+            Operand::I => State { I: byte.to_word(), .. self },
             _ => panic!("unimplemented target for set_byte.")
         }
     }
@@ -136,6 +138,123 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
         self.sound_timer.is_subset(&state.sound_timer);
         ret_val
     }
+
+    fn combine(&self, state: &State<'a>) -> CombineResult<State<'a>> {
+        if self.pc != state.pc ||
+            self.sp != state.sp {
+            return CombineResult::Uncombinable;
+        }
+        for i in 0..16 {
+            if self.stack[i] != state.stack[i] {
+                return CombineResult::Uncombinable;
+            }
+        }
+
+        let mut is_subset = true;
+        let mut comparable = true;
+        let mut differing_operand = None;
+
+        for i in 0..16 {
+            if !self.V[i].is_subset(&state.V[i]) {
+                if let None = differing_operand {
+                    differing_operand = Some(Operand::V(i));
+                    is_subset = false;
+                } else {
+                    return CombineResult::Uncombinable;
+                }
+            } else {
+                if !state.V[i].is_subset(&self.V[i]) {
+                    if let None = differing_operand {
+                        differing_operand = Some(Operand::V(i));
+                    } else {
+                        if !is_subset {
+                            return CombineResult::Uncombinable;
+                        } else {
+                            comparable = false;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if !self.I.is_subset(&state.I) {
+            if let None = differing_operand {
+                differing_operand = Some(Operand::I);
+                is_subset = false;
+            } else {
+                return CombineResult::Uncombinable;
+            }
+        } else {
+            if !state.I.is_subset(&self.I) {
+                if let None = differing_operand {
+                    differing_operand = Some(Operand::I);
+                } else {
+                    if !is_subset {
+                        return CombineResult::Uncombinable;
+                    } else {
+                        comparable = false;
+                    }
+                }
+            }
+        }
+        if !self.delay_timer.is_subset(&state.delay_timer) {
+            if let None = differing_operand {
+                differing_operand = Some(Operand::DelayTimer);
+                is_subset = false;
+            } else {
+                return CombineResult::Uncombinable;
+            }
+        } else {
+            if !state.delay_timer.is_subset(&self.delay_timer) {
+                if let None = differing_operand {
+                    differing_operand = Some(Operand::DelayTimer);
+                } else {
+                    if !is_subset {
+                        return CombineResult::Uncombinable;
+                    } else {
+                        comparable = false;
+                    }
+                }
+            }
+        }
+        if !self.sound_timer.is_subset(&state.sound_timer) {
+            if let None = differing_operand {
+                differing_operand = Some(Operand::SoundTimer);
+                is_subset = false;
+            } else {
+                return CombineResult::Uncombinable;
+            }
+        } else {
+            if !state.sound_timer.is_subset(&self.sound_timer) {
+                if let None = differing_operand {
+                    differing_operand = Some(Operand::SoundTimer);
+                } else {
+                    if !is_subset {
+                        return CombineResult::Uncombinable;
+                    } else {
+                        comparable = false;
+                    }
+                }
+            }
+        }
+
+        if is_subset {
+            return CombineResult::Subset;
+        }
+
+        if !comparable {
+            return CombineResult::Uncombinable;
+        }
+
+        match differing_operand {
+            None => CombineResult::Combination(self.clone()),
+            Some(operand) =>
+                CombineResult::Combination(
+                    self.clone().set_value(operand,
+                        self.get_value(operand).union(
+                            state.get_value(operand))))
+        }
+    }
 }
 
 impl<'a> fmt::Display for State<'a> {
@@ -158,7 +277,7 @@ impl<'a> fmt::Display for State<'a> {
         let line5 = {
             let mut line = String::new();
             for (address, value) in self.memory.get_deltas() {
-                line.push_str(format!("[{:x}] = {}\t", address + 0x200, value).as_str());
+                line.push_str(format!("[{:x}] = {}\t", address, value).as_str());
             }
             line
         };

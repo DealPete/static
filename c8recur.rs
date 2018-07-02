@@ -26,9 +26,6 @@ fn main() {
         );
 
         analysis.print_instructions();
-        /*if let Some(message) = error {
-            println!("{}", message);
-        }*/
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }

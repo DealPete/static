@@ -12,7 +12,9 @@ pub fn recursive_descent<S: StateTrait<S>, I: InstructionTrait, A: Architecture<
         instructions: HashMap::<usize, I>::new(),
     };
 
-    let mut indeterminates = Vec::new();
+    analysis.flow_graph.add_node_at(entry_offset, initial_state.clone());
+    analysis.flow_graph.add_label(entry_offset);
+
     let mut unexplored = Vec::new();
     unexplored.push(entry_offset);
 
@@ -23,7 +25,7 @@ pub fn recursive_descent<S: StateTrait<S>, I: InstructionTrait, A: Architecture<
                 Err(err) => panic!(err)
             };
 
-            let (addresses, labels, indeterminate) = architecture.successors(inst, offset);
+            let (addresses, labels, incomplete) = architecture.naive_successors(inst, offset);
 
             for address in addresses {
                 unexplored.push(address);
@@ -33,8 +35,7 @@ pub fn recursive_descent<S: StateTrait<S>, I: InstructionTrait, A: Architecture<
                 analysis.flow_graph.add_label(label);
             }
 
-            if indeterminate {
-                indeterminates.push(offset);
+            if incomplete {
             }
 
             if offset > analysis.highest_offset {
@@ -61,11 +62,60 @@ pub fn analyse<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: 
     analysis.flow_graph.add_node_at(entry_offset, initial_state.clone());
     analysis.flow_graph.add_label(entry_offset);
 
+    let mut unexplored = Vec::new();
+    //let mut unfollowed_branches = Vec::new();
+    unexplored.push(entry_offset);
+
+    while let Some(offset) = unexplored.pop() {
+        if let None = analysis.instructions.get(&offset) {
+            let inst = match architecture.decode_instruction(file_buffer, offset) {
+                Ok(instruction) => instruction,
+                Err(err) => panic!(err)
+            };
+
+            analysis.instructions.insert(offset, inst);
+            let (addresses, labels, indeterminate) = architecture.true_successors(&analysis, offset);
+
+            for address in addresses {
+                unexplored.push(address);
+            }
+
+            for label in labels {
+                analysis.flow_graph.add_label(label);
+            }
+
+            if indeterminate {
+                analysis.flow_graph.add_indeterminate(offset);
+            }
+
+            if offset > analysis.highest_offset {
+                analysis.highest_offset = offset
+            }
+
+            analysis.instructions.insert(offset, inst);
+        }
+    }
+
+    (analysis, None)
+}
+
+pub fn simulate<S: StateTrait<S>, I: InstructionTrait, A: Architecture<S, I>, C: Context<S, I>>(file_buffer: &Vec<u8>, initial_state: S, architecture: A, context: &C) -> (Analysis<S, I>, Option<String>) {
+    let entry_offset = context.entry_offset(&initial_state);
+
+    let mut analysis = Analysis {
+        entry_offset: entry_offset,
+        highest_offset: entry_offset,
+        flow_graph: graph::FlowGraph::new(),
+        instructions: HashMap::<usize, I>::new(),
+    };
+
+    analysis.flow_graph.add_node_at(entry_offset, initial_state.clone());
+    analysis.flow_graph.add_label(entry_offset);
+
     let mut live_states = Vec::new();
     live_states.push(initial_state.clone());
 
     while let Some(state) = live_states.pop() {
-        println!("{}", state);
         let inst_offset = context.next_inst_offset(&state);
         let inst = match analysis.instructions.get(&inst_offset) {
             None => match architecture.decode_instruction(file_buffer, inst_offset) {

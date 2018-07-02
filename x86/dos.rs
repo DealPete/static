@@ -56,11 +56,13 @@ impl<'a> Context<State<'a>, Instruction> for DOS {
         16 * state.cs as usize
             + state.ip as usize
             - 16 * self.load_module.memory_segment as usize
+            + self.load_module.file_offset
     }
 
     fn next_inst_offset(&self, state: &State<'a>) -> usize {
         let address = state.next_inst_address();
         address - 16 * self.load_module.memory_segment as usize
+            + self.load_module.file_offset
     }
 
     fn simulate_system_call(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {

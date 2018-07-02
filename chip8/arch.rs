@@ -18,7 +18,7 @@ impl<'a> Architecture<State<'a>, Instruction> for Chip8 {
         sim::simulate_next_instruction(state, context, instruction)
     }
 
-    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+    fn naive_successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
         match instruction.mnemonic {
             Mnemonic::CALL => match instruction.unpack_op1() {
                 Operand::Address(address) =>
@@ -37,31 +37,45 @@ impl<'a> Architecture<State<'a>, Instruction> for Chip8 {
             _ => (vec!(offset + 2), Vec::new(), false)
         }
     }
+
+    fn true_successors(&self, analysis: &Analysis<State<'a>, Instruction>, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+        let instruction = analysis.instructions.get(&offset).expect("No instruction at offset!");
+        println!("INSTRUCTION {}", instruction);
+        self.naive_successors(*analysis.instructions.get(&offset).unwrap(), offset)
+    }
 }
 
 impl<'a> Analysis<State<'a>, Instruction> {
     pub fn print_instructions(&self) {
         let mut output = String::new();
+        let mut last_inst_was_skip = false;
         for i in 0..0x1000 {
             if let Some(instruction) = self.instructions.get(&i) {
-                let prefix = {
-                    if self.flow_graph.is_labelled(i) {
-                        format!("{:4x}:   ", i + 0x200)
-                    } else {
-                        format!("        ")
-                    }
-                };
-                output.push_str(format!("{}{}", prefix, instruction).as_str());
-                if i == 0x200 {
-                    output.push_str("\t; program entry point");
+                if self.flow_graph.is_labelled(i) {
+                    output.push_str(format!("{:4x}:   ", i + 0x200).as_str());
                 } else {
-                    output.push_str("\n");
+                    output.push_str("        ");
                 }
-                if instruction.mnemonic == Mnemonic::SE
-                    || instruction.mnemonic == Mnemonic::SNE {
+
+                if last_inst_was_skip {
                     output.push_str("    ");
+                }
+                last_inst_was_skip = false;
+                    
+                output.push_str(format!("{}{}\n",
+                    if self.flow_graph.is_indeterminate(i) {
+                        "* "
+                    } else {
+                        ""
+                    }, instruction).as_str());
+                if instruction.mnemonic == Mnemonic::SE
+                    || instruction.mnemonic == Mnemonic::SNE
+                    || instruction.mnemonic == Mnemonic::SKP
+                    || instruction.mnemonic == Mnemonic::SKNP {
                     if let None = self.instructions.get(&(i+2)) {
-                        output.push_str("        ????\n");
+                        output.push_str("            ????\n");
+                    } else {
+                        last_inst_was_skip = true;
                     }
                 }
             }

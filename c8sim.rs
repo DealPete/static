@@ -1,12 +1,12 @@
 mod analyse;
 mod defs;
 mod graph;
-mod x86;
+mod chip8;
 
 fn main() {
-	use std::env;
-	use std::io::Read;
-	use std::fs::File;
+    use std::env;
+    use std::io::Read;
+    use std::fs::File;
 
 	if let Some(arg) = env::args().nth(1) {
 		let mut file = File::open(arg).expect(
@@ -15,13 +15,13 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let context = x86::dos::DOS::new(&buffer);
-        let initial_state = context.initial_state(&buffer);
+        let context = chip8::arch::Interpreter {};
+        let initial_state = chip8::state::State::new(&buffer);
 
-        let (analysis, error) = analyse::analyse(
+        let (analysis, error) = analyse::simulate(
             &buffer,
             initial_state,
-            x86::arch::X86 {},
+            chip8::arch::Chip8 {},
             &context
         );
 

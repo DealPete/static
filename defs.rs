@@ -7,7 +7,31 @@ use std::ops::Add;
 pub trait Architecture<S: StateTrait<S>, I: InstructionTrait> : Copy + Clone {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<I, String>;
     fn simulate_next_instruction<C: Context<S, I>>(&self, state: S, context: &C, instruction: I) -> SimResult<S>;
-    fn successors(&self, instruction: I, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
+
+    // naive_successors(I, offset) -> (addresses, labels, indeterminate)
+    // true_successors(Analysis, offset) -> (addresses, labels, incomplete)
+    // 
+    // naive_successors computes the instruction's successors from
+    // its optype and operands.
+    // true_successors walks the program tree in "analysis" to 
+    // determine which branch targets can actually be taken by the program.
+    // Since the problem is undecidable in general, heuristics must be
+    // used.
+    //
+    // addresses is a vector of successor addresses.
+    //
+    // labels is a vector of addresses that need to be labelled due to
+    // the instruction at address.
+    //
+    // indeterminate is true for if the set of successor addresses
+    // couldn't be determined naively (e.g. because I is an indirect jump).
+    //
+    // incomplete is always true for indirect jumps,
+    // and also true for branches if one of the branches is never taken
+    // by the program as it currently stands.
+
+    fn naive_successors(&self, instruction: I, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
+    fn true_successors(&self, analysis: &Analysis<S, I>, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
 }
 
 pub trait Context<S: StateTrait<S>, I: InstructionTrait> {
@@ -19,6 +43,7 @@ pub trait Context<S: StateTrait<S>, I: InstructionTrait> {
 pub trait StateTrait<S: StateTrait<S>> : Clone + fmt::Display {
     fn union(self, state: S) -> S;
     fn is_subset(&self, state: &S) -> bool;
+    fn combine(&self, state: &S) -> CombineResult<S>;
 }
 
 pub trait InstructionTrait : Copy + Clone + fmt::Display {
@@ -37,6 +62,12 @@ pub enum SimResult<S: StateTrait<S>> {
     End,
     State(S),
     Branch((Vec<S>, Vec<usize>))
+}
+
+pub enum CombineResult<S: StateTrait<S>> {
+    Subset,
+    Uncombinable,
+    Combination(S)
 }
 
 pub fn get_word_le(buffer : &[u8], offset: usize) -> u16 {
@@ -84,19 +115,19 @@ impl<'a> Memory<'a> {
     }
 
     pub fn union(mut self, memory: Memory<'a>) -> Memory<'a> {
-        for (offset, value) in memory.deltas {
-            match self.deltas.remove(&offset) {
-                None => self.deltas.insert(offset, value),
+        for (address, value) in memory.deltas {
+            match self.deltas.remove(&address) {
+                None => self.deltas.insert(address, value),
                 Some(memory_value) =>
-                    self.deltas.insert(offset, memory_value.union(value))
+                    self.deltas.insert(address, memory_value.union(value))
             };
         }
         self
     }
 
     pub fn is_subset(&self, memory: &Memory<'a>) -> bool {
-        for (offset, value1) in self.deltas.iter() {
-            match memory.deltas.get(&offset) {
+        for (address, value1) in self.deltas.iter() {
+            match memory.deltas.get(&address) {
                 None => return false,
                 Some(ref value2) => if !value1.is_subset(value2) {
                     return false;
@@ -107,11 +138,11 @@ impl<'a> Memory<'a> {
         true
     }
 
-    pub fn get_word(&self, location: usize) -> Word {
-        match self.deltas.get(&location) {
+    pub fn get_word(&self, memory_address: usize) -> Word {
+        match self.deltas.get(&memory_address) {
             None => match self.endian {
-                Endian::Little => Word::new(get_word_le(self.base, location - self.load_offset)),
-                Endian::Big => Word::new(get_word_be(self.base, location - self.load_offset)),
+                Endian::Little => Word::new(get_word_le(self.base, memory_address - self.load_offset)),
+                Endian::Big => Word::new(get_word_be(self.base, memory_address - self.load_offset)),
             },
             Some(value) => match value {
                 &Value::Byte(_) => panic!("Can't read non-word as word from memory."),
@@ -120,9 +151,9 @@ impl<'a> Memory<'a> {
         }
     }
 
-    pub fn get_byte(&self, location: usize) -> Byte {
-        match self.deltas.get(&location) {
-            None => Byte::new(self.base[location - self.load_offset]),
+    pub fn get_byte(&self, memory_address: usize) -> Byte {
+        match self.deltas.get(&memory_address) {
+            None => Byte::new(self.base[memory_address - self.load_offset]),
             Some(value) => match value {
                 &Value::Byte(ref new_byte) => new_byte.clone(),
                 _ => panic!("Can't read non-byte as byte from memory.")
@@ -130,12 +161,12 @@ impl<'a> Memory<'a> {
         }
     }
 
-    pub fn write_value(&mut self, location: usize, value: Value) {
-        self.deltas.insert(location - self.load_offset, value);
+    pub fn write_value(&mut self, memory_address: usize, value: Value) {
+        self.deltas.insert(memory_address, value);
     }
 
-    pub fn write_string(&mut self, location: usize, string: &[Byte]) {
-        let lower_bound = location - self.load_offset;
+    pub fn write_string(&mut self, memory_address: usize, string: &[Byte]) {
+        let lower_bound = memory_address;
         for i in 0..string.len() {
             self.deltas.insert(lower_bound + i, Value::Byte(string[i].clone()));
         }
@@ -427,7 +458,7 @@ impl fmt::Debug for Word {
                 }
                 write!(f, "[{} ]", output)
             },
-            Word::Bytes(_, _) => write!(f, "two bytes")
+            Word::Bytes(ref bytel, ref byteh) => write!(f, "{:?}{:?}", bytel, byteh)
         }
     }
 }
@@ -647,6 +678,22 @@ impl Byte {
             Byte::AnyValue => (true, false),
             Byte::Int(ref set) => (set.contains(&byte),
                 set.contains(&byte) || set.len() > 1),
+        }
+    }
+}
+
+impl fmt::Debug for Byte {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Byte::Undefined => write!(f, "Undefined"),
+            Byte::AnyValue => write!(f, "AnyValue"),
+            Byte::Int(ref set) => {
+                let mut output = String::new();
+                for byte in set.iter() {
+                    output.push_str(format!(" {:x}", byte).as_str());
+                }
+                write!(f, "[{} ]", output)
+            }
         }
     }
 }

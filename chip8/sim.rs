@@ -5,7 +5,6 @@ use std::collections::HashSet;
 
 pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
     state.pc += 2;
-    println!("{}\n", instruction);
     match instruction.mnemonic {
         Mnemonic::CLS => SimResult::State(state),
         Mnemonic::JP | Mnemonic::CALL | Mnemonic::SE | Mnemonic::SNE
@@ -18,7 +17,8 @@ pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut sta
         | Mnemonic::XOR | Mnemonic::SUBN =>
             SimResult::State(simulate_binary_operator(state, instruction)),
         Mnemonic::RND => simulate_rnd(state, instruction),
-        Mnemonic::DRW => SimResult::State(state),
+        Mnemonic::DRW => SimResult::State(state.
+            set_byte(Operand::V(0xF), Byte::from_vec(vec!(0, 1)))),
         Mnemonic::LDBCD => simulate_ldbcd(state, instruction),
         Mnemonic::LDPTR => simulate_ldptr(state, instruction)
     }
@@ -50,6 +50,12 @@ fn branch<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, instruct
                 _ => panic!("CALL operand should be immediate address.")
             };
             new_labels.push(context.next_inst_offset(&state));
+            new_states.push(state);
+        },
+        Mnemonic::SKP | Mnemonic::SKNP => {
+            let mut new_state = state.clone();
+            new_state.pc += 2;
+            new_states.push(new_state);
             new_states.push(state);
         },
         Mnemonic::SE | Mnemonic::SNE => {
@@ -107,7 +113,13 @@ fn simulate_binary_operator<'a>(state: State<'a>, inst: Instruction) -> State<'a
     let new_state = state.set_value(op1, result);
     match vf {
         None => new_state,
-        Some(byte) => new_state.set_byte(Operand::V(0xF), byte) 
+        Some(byte) => match op2 {
+            Operand::Byte(_) => new_state,
+            _ => match op1 {
+                Operand::I => new_state,
+                _ => new_state.set_byte(Operand::V(0xF), byte) 
+            }
+        }
     }
 }
 
@@ -130,8 +142,19 @@ fn simulate_rnd<'a>(state: State<'a>, inst: Instruction) -> SimResult<State<'a>>
     }
 }
 
-fn simulate_ldbcd<'a>(state: State<'a>, inst: Instruction) -> SimResult<State<'a>> {
-    panic!("LDBCD unimplemented")
+fn simulate_ldbcd<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<State<'a>> {
+    match state.I {
+        Word::Undefined => panic!("Can't write to undefined memory location."),
+        Word::AnyValue => panic!("Can't write to all memory locations."),
+        Word::Int(ref set) => {
+            for address in set.iter() {
+                state.memory.write_string(*address as usize,
+                    &vec!(Byte::Undefined, Byte::Undefined, Byte::Undefined));
+            }
+        },
+        Word::Bytes(_, _) => panic!("Index register shouldn't be split.")
+    }
+    SimResult::State(state)
 }
 
 fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<State<'a>> {
@@ -162,12 +185,9 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
                 Word::Undefined => panic!("Can't read from undefined memory location."),
                 Word::AnyValue => panic!("Can't read from every memory location."),
                 Word::Int(ref set) => {
-                    if set.len() > 1 {
-                        panic!("Reading from non-deterministic index register no implemented.");
-                    }
                     for address in set.iter() {
                         for i in 0..(x+1) {
-                            state.V[i] = state.memory.get_byte(*address as usize);
+                            state.V[i] = state.memory.get_byte(*address as usize  + i);
                         }
                     }
                 },
