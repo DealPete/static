@@ -15,18 +15,19 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let context = chip8::arch::Interpreter {};
-        let initial_state = chip8::state::State::new(&buffer);
+        let start_offset = match env::args().nth(2) {
+            None => 0,
+            Some(offset) => usize::from_str_radix(&offset, 16).unwrap_or(0)
+        };
 
-        let analysis = analyse::recursive_descent(
+        let listing = analyse::recursive_descent(
             &buffer,
-            initial_state,
             chip8::arch::Chip8 {},
-            &context
+            start_offset
         );
 
-        analysis.print_instructions();
+        listing.print_instructions();
     } else {
-		println!("usage: dis <file-to-disassemble>");
+		println!("usage: dis <file-to-disassemble> [<start-offset>]");
     }
 }

@@ -1,58 +1,87 @@
-use x86::state::State;
 use defs::*;
 use x86::dis;
-use x86::sim;
 use std::fmt;
 
 #[derive(Copy, Clone)]
 pub struct X86 {
 }
 
-impl<'a> Architecture<State<'a>, Instruction> for X86 {
+impl<'a> Architecture<Instruction> for X86 {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<Instruction, String> {
         dis::decode_instruction(buffer, offset)
     }
 
-    fn simulate_next_instruction<C: Context<State<'a>, Instruction>>(&self, state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
-        sim::simulate_next_instruction(state, context, instruction)
-    }
-
-    fn naive_successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
         println!("{}", instruction);
         match instruction.mnemonic {
-            Mnemonic::JMP => (Vec::new(), Vec::new(), true),
+            Mnemonic::JB | Mnemonic::JO | Mnemonic::JNO
+            | Mnemonic::JB | Mnemonic::JNB | Mnemonic::JZ
+            | Mnemonic::JNZ | Mnemonic::JBE | Mnemonic::JNBE
+            | Mnemonic::JS | Mnemonic::JNS | Mnemonic::JP
+            | Mnemonic::JNP | Mnemonic::JL | Mnemonic::JNL
+            | Mnemonic::JLE | Mnemonic::JNLE | Mnemonic::CALL =>
+                match instruction.unpack_op1() {
+                    Operand::Imm8(byte) => {
+                        let base = offset + instruction.length as usize;
+                        let target = add_rel8(base, byte);
+                        (vec!(base, target), vec!(target), false)
+                    },
+                    Operand::Imm16(word) => {
+                        let base = offset + instruction.length as usize;
+                        let target = add_rel16(base, word);
+                        (vec!(base, target), vec!(target), false)
+                    },
+                    _ => panic!("expected byte or word operand for branch")
+                },
+            Mnemonic::JMP =>
+                match instruction.unpack_op1() {
+                    Operand::Imm8(byte) => {
+                        let base = offset + instruction.length as usize;
+                        let target = add_rel8(base, byte);
+                        (vec!(target), vec!(target), false)
+                    },
+                    Operand::Imm16(word) => {
+                        let base = offset + instruction.length as usize;
+                        let target = add_rel16(base, word);
+                        (vec!(target), vec!(target), false)
+                    },
+                    Operand::Pointer(_) => (Vec::new(), Vec::new(), true),
+                    _ => panic!("unexpected JMP operand")
+                },
             Mnemonic::RET => (Vec::new(), Vec::new(), false),
             Mnemonic::INT => match instruction.unpack_op1() {
                 Operand::Imm8(0x20) =>
                     (Vec::new(), Vec::new(), false),
                 Operand::Imm8(0x21) =>
                     (Vec::new(), Vec::new(), true),
-                _ => panic!("unexpected INT function")
+                Operand::Imm8(0x27) =>
+                    (Vec::new(), Vec::new(), false),
+                _ => (vec!(offset + instruction.length as usize), Vec::new(), false)
             },
             _ => (vec!(offset + instruction.length as usize), Vec::new(), false)
         }
     }
-
-    fn true_successors(&self, analysis: Analysis<State<'a>, Instruction>, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
-        // unimplemented
-
-        (Vec::new(), Vec::new(), true)
-    }
 }
-
-impl<'a> Analysis<State<'a>, Instruction> {
+/*
+    fn simulate_next_instruction<C: Context<State<'a>, Instruction>>(&self, state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
+        sim::simulate_next_instruction(state, context, instruction)
+    }
+*/
+impl Listing<Instruction> {
     pub fn print_instructions(&self) {
         let mut output = String::new();
-        for i in 0..self.highest_offset {
+        for i in 0..self.highest_offset+1 {
             if let Some(instruction) = self.instructions.get(&i) {
-                let prefix = {
-                    let node = self.flow_graph.get_node_at(i).expect(
-                        format!("instruction 0x{:x} has no node!", i).as_str());
-                    if self.flow_graph.is_labelled(i) {
+                let prefix =
+                    if self.is_labelled(i) {
                         format!("{:4x}:   ", i)
                     } else {
                         format!("        ")
-                    }
+                    };
+                let indeterminate = if self.is_indeterminate(i) {
+                    "* "
+                } else {
+                    ""
                 };
                 let inst_output = if instruction.is_rel_branch() {
                     let mut target = i + instruction.length as usize;
@@ -65,7 +94,7 @@ impl<'a> Analysis<State<'a>, Instruction> {
                 } else {
                     format!("{}", instruction)
                 };
-                output.push_str(format!("{}{}{}\n", prefix.as_str(), inst_output,
+                output.push_str(format!("{}{}{}{}\n", prefix.as_str(), indeterminate, inst_output,
                     if i == self.entry_offset {
                         "\t; program entry point"
                     } else {
@@ -236,7 +265,7 @@ impl Mnemonic {
             Mnemonic::JS | Mnemonic::JNS | Mnemonic::JP | Mnemonic::JNP |
             Mnemonic::JL | Mnemonic::JNL | Mnemonic::JNLE | Mnemonic::JCXZ |
             Mnemonic::LOOP | Mnemonic::LOOPNZ | Mnemonic::LOOPZ |
-            Mnemonic::CALL | Mnemonic::RET => true,
+            Mnemonic::CALL => true,
             _ => false
         }
     }

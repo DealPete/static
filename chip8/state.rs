@@ -3,6 +3,7 @@ use chip8::arch::*;
 use std::fmt;
 
 #[derive(Clone)]
+#[allow(non_snake_case)]
 pub struct State<'a> {
     pub pc: u16,
     pub sp: usize,
@@ -15,17 +16,17 @@ pub struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    pub fn new(initial_memory: &'a [u8]) -> State<'a> {
+    pub fn new(initial_memory: &'a [u8], start_offset: u16) -> State<'a> {
         State {
-            pc: 0x200,
+            pc: 0x200 + start_offset,
             sp: 0,
             I: Word::Undefined,
             V: {
-                let mut new_V = Vec::new();
-                for i in 0..16 {
-                    new_V.push(Byte::new(0));
+                let mut new_v = Vec::new();
+                for _i in 0..16 {
+                    new_v.push(Byte::new(0));
                 }
-                new_V
+                new_v
             },
             delay_timer: Byte::new(0),
             sound_timer: Byte::new(0),
@@ -82,9 +83,9 @@ impl<'a> State<'a> {
     pub fn set_byte(self, operand: Operand, byte: Byte) -> State<'a> {
         match operand {
             Operand::V(x) => {
-                let mut new_V = self.V.clone();
-                new_V[x] = byte;
-                State { V: new_V, .. self }
+                let mut new_v = self.V.clone();
+                new_v[x] = byte;
+                State { V: new_v, .. self }
             },
             Operand::DelayTimer => State { delay_timer: byte, .. self },
             Operand::SoundTimer => State { sound_timer: byte, .. self },
@@ -107,11 +108,11 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
             sp: self.sp,
             I: self.I.union(state.I),
             V: {
-                let mut new_V = Vec::new();
+                let mut new_v = Vec::new();
                 for i in 0..16 {
-                    new_V.push(self.V[i].clone().union(state.V[i].clone()))
+                    new_v.push(self.V[i].clone().union(state.V[i].clone()))
                 }
-                new_V
+                new_v
             },
             delay_timer: self.delay_timer.union(state.delay_timer),
             sound_timer: self.sound_timer.union(state.sound_timer),
@@ -255,6 +256,32 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
                             state.get_value(operand))))
         }
     }
+
+    fn debug_string(&self) -> String {
+        let line1 = format!("PC={:04x}, SP: {:04x} I={:?} DT={:?} ST={:?}\n",
+            self.pc, self.sp, self.I, self.delay_timer, self.sound_timer);
+        let line2 = format!("V0={:?} V1={:?} V2={:?} V3={:?} V4={:?} V5={:?} V6={:?} V7={:?}\n",
+            self.V[0], self.V[1], self.V[2], self.V[3],
+            self.V[4], self.V[5], self.V[6], self.V[7]);
+        let line3 = format!("V8={:?} V9={:?} VA={:?} VB={:?} VC={:?} VD={:?} VE={:?} VF={:?}\n",
+            self.V[8], self.V[9], self.V[10], self.V[11],
+            self.V[12], self.V[13], self.V[14], self.V[15]);
+        let line4 = {
+            let mut line = String::from("Stack: ");
+            for i in 0..16 {
+                line.push_str(format!("{:04x} ", self.stack[i]).as_str());
+            }
+            line
+        };
+        let line5 = {
+            let mut line = String::new();
+            for (address, value) in self.memory.get_deltas() {
+                line.push_str(format!("[{:x}] = {}\t", address, value).as_str());
+            }
+            line
+        };
+        format!("{}{}{}{}{}", line1, line2, line3, line4, line5)
+    }
 }
 
 impl<'a> fmt::Display for State<'a> {
@@ -284,3 +311,4 @@ impl<'a> fmt::Display for State<'a> {
         write!(f, "{}{}{}{}{}", line1, line2, line3, line4, line5)
     }
 }
+

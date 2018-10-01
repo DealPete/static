@@ -1,0 +1,32 @@
+// Decompile of Mine Field game.
+
+call <d47>
+
+call <e56>(0)
+call <d8f>(0)
+
+// Bochs' says that ports 8000-80ff are available for
+// "EISA slot 8", so this code may be looking for a
+// specific peripheral.
+function d47() {
+	io = IN 8006
+	if io == 34 {
+		io = IN 800c
+		if io == 31 {
+			[17b4] = 1
+			[17b5] = e83
+			return
+		}
+	}
+	[17b4] = 0
+	[17b5] = 0e77
+}
+
+function e56(arg) {
+	if arg == 0 {
+		(_, _, _, cs) = get_dos_time()
+		[17b7] = cs
+	} else {
+		[17b7] = arg
+	}
+}

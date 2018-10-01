@@ -3,101 +3,116 @@ use chip8::arch::*;
 use chip8::state::{State};
 use std::collections::HashSet;
 
-pub fn simulate_next_instruction<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, context: &C, instruction: Instruction) -> SimResult<State<'a>> {
-    state.pc += 2;
-    match instruction.mnemonic {
-        Mnemonic::CLS => SimResult::State(state),
-        Mnemonic::JP | Mnemonic::CALL | Mnemonic::SE | Mnemonic::SNE
-        | Mnemonic::SKP | Mnemonic::SKNP | Mnemonic::RET =>
-            SimResult::Branch(branch(state, instruction, context)),
-        Mnemonic::LD => simulate_ld(state, instruction),
-        Mnemonic::SHL | Mnemonic::SHR =>
-            SimResult::State(simulate_unary_operator(state, instruction)),
-        Mnemonic::ADD | Mnemonic::SUB | Mnemonic::OR | Mnemonic::AND
-        | Mnemonic::XOR | Mnemonic::SUBN =>
-            SimResult::State(simulate_binary_operator(state, instruction)),
-        Mnemonic::RND => simulate_rnd(state, instruction),
-        Mnemonic::DRW => SimResult::State(state.
-            set_byte(Operand::V(0xF), Byte::from_vec(vec!(0, 1)))),
-        Mnemonic::LDBCD => simulate_ldbcd(state, instruction),
-        Mnemonic::LDPTR => simulate_ldptr(state, instruction)
-    }
+pub struct Interpreter {
 }
 
-fn branch<'a, C: Context<State<'a>, Instruction>>(mut state: State<'a>, instruction: Instruction, context: &C) -> (Vec<State<'a>>, Vec<usize>) {
-    let mut new_states = Vec::new();
-    let mut new_labels = Vec::new();
-
-    match instruction.mnemonic {
-        Mnemonic::CALL => {
-            state.stack[state.sp] = state.pc;
-            state.sp += 1;
-            state.pc = match instruction.unpack_op1() {
-                Operand::Address(word) => word,
-                _ => panic!("CALL operand should be immediate address.")
-            };
-            new_labels.push(context.next_inst_offset(&state));
-            new_states.push(state);
-        },
-        Mnemonic::RET => {
-            state.sp -= 1;
-            state.pc = state.stack[state.sp];
-            new_states.push(state);
-        },
-        Mnemonic::JP => {
-            state.pc = match instruction.unpack_op1() {
-                Operand::Address(word) => word,
-                _ => panic!("CALL operand should be immediate address.")
-            };
-            new_labels.push(context.next_inst_offset(&state));
-            new_states.push(state);
-        },
-        Mnemonic::SKP | Mnemonic::SKNP => {
-            let mut new_state = state.clone();
-            new_state.pc += 2;
-            new_states.push(new_state);
-            new_states.push(state);
-        },
-        Mnemonic::SE | Mnemonic::SNE => {
-            let op1 = instruction.unpack_op1();
-            let op2 = instruction.unpack_op2();
-
-            let intersect = state.get_byte(op1).intersect(&state.get_byte(op2));
-
-            match op2 {
-                Operand::Byte(byte) => {
-                    let difference = state.get_byte(op1).difference(Byte::new(byte));
-                    match instruction.mnemonic {
-                        Mnemonic::SE => {
-                            if intersect.len() > 0 {
-                                let mut new_state = state.clone();
-                                new_state.pc += 2;
-                                new_states.push(new_state.set_byte(op1, intersect.clone()));
-                            }
-                            if difference.len() > 0 {
-                                new_states.push(state.set_byte(op1, difference));
-                            }
-                        },
-                        Mnemonic::SNE => {
-                            if intersect.len() > 0 {
-                                let new_state = state.clone();
-                                new_states.push(new_state.set_byte(op1, intersect.clone()));
-                            }
-                            if difference.len() > 0 {
-                                state.pc += 2;
-                                new_states.push(state.set_byte(op1, difference));
-                            }
-                        },
-                        _ => panic!("shouldn't be here")
-                    }
-                },
-                _ => panic!("unimplemented")
-            }
-        },
-        _ => panic!("unimplemented jump instruction")
+impl<'a> SimulatorTrait<State<'a>, Instruction> for Interpreter {
+    fn next_inst_offset(state: &State<'a>) -> usize {
+        (state.pc - 0x200) as usize
     }
 
-    (new_states, new_labels)
+    fn simulate_system_call(&self, _state: State<'a>, _inst: Instruction) -> Option<State<'a>> {
+        panic!("Can't simluate system calls in interpreter");
+    }
+
+    fn simulate_next_instruction(&self, mut state: State<'a>, instruction: Instruction) -> SimResult<State<'a>> {
+        state.pc += 2;
+        match instruction.mnemonic {
+            Mnemonic::EXIT => SimResult::End,
+            Mnemonic::CLS | Mnemonic::SCD | Mnemonic::SCR | Mnemonic::SCL
+            | Mnemonic::LOW | Mnemonic::HIGH =>
+                SimResult::State(state),
+            Mnemonic::JP | Mnemonic::CALL | Mnemonic::SE | Mnemonic::SNE
+            | Mnemonic::SKP | Mnemonic::SKNP | Mnemonic::RET =>
+                SimResult::Branch(self.branch(state, instruction)),
+            Mnemonic::LD => simulate_ld(state, instruction),
+            Mnemonic::SHL | Mnemonic::SHR =>
+                SimResult::State(simulate_unary_operator(state, instruction)),
+            Mnemonic::ADD | Mnemonic::SUB | Mnemonic::OR | Mnemonic::AND
+            | Mnemonic::XOR | Mnemonic::SUBN =>
+                SimResult::State(simulate_binary_operator(state, instruction)),
+            Mnemonic::RND => simulate_rnd(state, instruction),
+            Mnemonic::DRW => SimResult::State(state.
+                set_byte(Operand::V(0xF), Byte::from_vec(vec!(0, 1)))),
+            Mnemonic::LDBCD => simulate_ldbcd(state, instruction),
+            Mnemonic::LDPTR => simulate_ldptr(state, instruction)
+        }
+    }
+
+}
+
+impl<'a> Interpreter {
+    fn branch(&self, mut state: State<'a>, instruction: Instruction) -> (Vec<State<'a>>, Vec<usize>) {
+        let mut new_states = Vec::new();
+        let mut new_labels = Vec::new();
+
+        match instruction.mnemonic {
+            Mnemonic::CALL => {
+                state.stack[state.sp] = state.pc;
+                state.sp += 1;
+                state.pc = match instruction.unpack_op1() {
+                    Operand::Address(word) => word,
+                    _ => panic!("CALL operand should be immediate address.")
+                };
+                new_labels.push(Interpreter::next_inst_offset(&state));
+                new_states.push(state);
+            },
+            Mnemonic::RET => {
+                state.sp -= 1;
+                state.pc = state.stack[state.sp];
+                new_states.push(state);
+            },
+            Mnemonic::JP => {
+                state.pc = match instruction.unpack_op1() {
+                    Operand::Address(word) => word,
+                    _ => panic!("CALL operand should be immediate address.")
+                };
+                new_labels.push(Interpreter::next_inst_offset(&state));
+                new_states.push(state);
+            },
+            Mnemonic::SKP | Mnemonic::SKNP => {
+                let mut new_state = state.clone();
+                new_state.pc += 2;
+                new_states.push(new_state);
+                new_states.push(state);
+            },
+            Mnemonic::SE | Mnemonic::SNE => {
+                let op1 = instruction.unpack_op1();
+                let op2 = instruction.unpack_op2();
+
+                let op2byte = &state.get_byte(op2);
+                let intersect = state.get_byte(op1).intersect(op2byte);
+                let difference = state.get_byte(op1).difference(op2byte);
+
+                match instruction.mnemonic {
+                    Mnemonic::SE => {
+                        if intersect.len() > 0 {
+                            let mut new_state = state.clone();
+                            new_state.pc += 2;
+                            new_states.push(new_state.set_byte(op1, intersect.clone()));
+                        }
+                        if difference.len() > 0 {
+                            new_states.push(state.set_byte(op1, difference));
+                        }
+                    },
+                    Mnemonic::SNE => {
+                        if intersect.len() > 0 {
+                            let new_state = state.clone();
+                            new_states.push(new_state.set_byte(op1, intersect.clone()));
+                        }
+                        if difference.len() > 0 {
+                            state.pc += 2;
+                            new_states.push(state.set_byte(op1, difference));
+                        }
+                    },
+                    _ => panic!("shouldn't be here")
+                }
+            },
+            _ => panic!("unimplemented jump instruction")
+        }
+
+        (new_states, new_labels)
+    }
 }
 
 fn simulate_unary_operator<'a>(state: State<'a>, inst: Instruction) -> State<'a> {
@@ -142,7 +157,7 @@ fn simulate_rnd<'a>(state: State<'a>, inst: Instruction) -> SimResult<State<'a>>
     }
 }
 
-fn simulate_ldbcd<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<State<'a>> {
+fn simulate_ldbcd<'a>(mut state: State<'a>, _inst: Instruction) -> SimResult<State<'a>> {
     match state.I {
         Word::Undefined => panic!("Can't write to undefined memory location."),
         Word::AnyValue => panic!("Can't write to all memory locations."),
@@ -187,7 +202,11 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
                 Word::Int(ref set) => {
                     for address in set.iter() {
                         for i in 0..(x+1) {
-                            state.V[i] = state.memory.get_byte(*address as usize  + i);
+                            let memory_byte = state.memory.get_byte(*address as usize  + i);
+                            match memory_byte {
+                                Some(byte) => state.V[i] = byte,
+                                None => return SimResult::Error(state.clone(), String::from(format!("Tried to read from uninitialized memory location {:x}", *address)))
+                            }
                         }
                     }
                 },

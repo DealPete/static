@@ -1,49 +1,39 @@
-use graph::FlowGraph;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ops::Add;
 
-pub trait Architecture<S: StateTrait<S>, I: InstructionTrait> : Copy + Clone {
+pub trait Architecture<I: InstructionTrait> : Copy + Clone {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<I, String>;
-    fn simulate_next_instruction<C: Context<S, I>>(&self, state: S, context: &C, instruction: I) -> SimResult<S>;
 
-    // naive_successors(I, offset) -> (addresses, labels, indeterminate)
-    // true_successors(Analysis, offset) -> (addresses, labels, incomplete)
-    // 
-    // naive_successors computes the instruction's successors from
+    // successors(instruction, offset) -> (addresses, labels, indeterminate)
+    // successors computes the instruction's successors from
     // its optype and operands.
-    // true_successors walks the program tree in "analysis" to 
-    // determine which branch targets can actually be taken by the program.
-    // Since the problem is undecidable in general, heuristics must be
-    // used.
+    // 
+    // "addresses" is a vector of successor addresses.
     //
-    // addresses is a vector of successor addresses.
-    //
-    // labels is a vector of addresses that need to be labelled due to
+    // "labels" is a vector of addresses that need to be labelled due to
     // the instruction at address.
     //
-    // indeterminate is true for if the set of successor addresses
-    // couldn't be determined naively (e.g. because I is an indirect jump).
-    //
-    // incomplete is always true for indirect jumps,
-    // and also true for branches if one of the branches is never taken
-    // by the program as it currently stands.
+    // "indeterminate" is true if the set of successor addresses
+    // couldn't be determined without knowledge of program state.
+    // (e.g. because "instruction" is an indirect jump or an interrupt
+    // that might end the program).
 
-    fn naive_successors(&self, instruction: I, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
-    fn true_successors(&self, analysis: &Analysis<S, I>, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
+    fn successors(&self, instruction: I, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
 }
 
-pub trait Context<S: StateTrait<S>, I: InstructionTrait> {
+pub trait SimulatorTrait<S: StateTrait<S>, I: InstructionTrait> {
+    fn simulate_next_instruction(&self, state: S, instruction: I) -> SimResult<S>;
     fn simulate_system_call(&self, state: S, inst: I) -> Option<S>;
-    fn entry_offset(&self, state: &S) -> usize;
-    fn next_inst_offset(&self, state: &S) -> usize;
+    fn next_inst_offset(state: &S) -> usize;
 }
 
 pub trait StateTrait<S: StateTrait<S>> : Clone + fmt::Display {
     fn union(self, state: S) -> S;
     fn is_subset(&self, state: &S) -> bool;
     fn combine(&self, state: &S) -> CombineResult<S>;
+    fn debug_string(&self) -> String;
 }
 
 pub trait InstructionTrait : Copy + Clone + fmt::Display {
@@ -51,14 +41,45 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_rel_branch(&self) -> bool;
 }
 
-pub struct Analysis<State: StateTrait<State>, Instruction: InstructionTrait> {
+pub struct Listing<Instruction: InstructionTrait> {
     pub entry_offset: usize,
     pub highest_offset: usize,
-    pub flow_graph: FlowGraph<State>,
-    pub instructions: HashMap<usize, Instruction>
+    pub instructions: HashMap<usize, Instruction>,
+    labels: HashSet<usize>,
+    indeterminates: HashSet<usize>
+}
+
+impl<I: InstructionTrait> Listing<I> {
+    pub fn new(entry_offset: usize) -> Listing<I> {
+        Listing {
+            entry_offset: entry_offset,
+            highest_offset:entry_offset,
+            instructions: HashMap::<usize, I>::new(),
+            labels: HashSet::new(),
+            indeterminates: HashSet::new()
+        }
+    }
+
+    pub fn add_label(&mut self, offset: usize) {
+        self.labels.insert(offset);
+    }
+
+    pub fn add_indeterminate(&mut self, offset: usize) {
+        self.indeterminates.insert(offset);
+    }
+
+    pub fn is_labelled(&self, offset: usize) -> bool {
+        self.labels.contains(&offset)
+    }
+    
+    pub fn is_indeterminate(&self, offset: usize) -> bool {
+        self.indeterminates.contains(&offset)
+    }
+
 }
 
 pub enum SimResult<S: StateTrait<S>> {
+    Error(S, String),
     End,
     State(S),
     Branch((Vec<S>, Vec<usize>))
@@ -151,11 +172,18 @@ impl<'a> Memory<'a> {
         }
     }
 
-    pub fn get_byte(&self, memory_address: usize) -> Byte {
+    pub fn get_byte(&self, memory_address: usize) -> Option<Byte> {
         match self.deltas.get(&memory_address) {
-            None => Byte::new(self.base[memory_address - self.load_offset]),
+            None => {
+                let offset = memory_address - self.load_offset;
+                if offset >= self.base.len() {
+                    None
+                } else {
+                    Some(Byte::new(self.base[offset]))
+                }
+            },
             Some(value) => match value {
-                &Value::Byte(ref new_byte) => new_byte.clone(),
+                &Value::Byte(ref new_byte) => Some(new_byte.clone()),
                 _ => panic!("Can't read non-byte as byte from memory.")
             }
         }
@@ -642,22 +670,22 @@ impl Byte {
         }
     }
 
-    pub fn difference(&self, byte: Byte) -> Byte {
+    pub fn difference(&self, byte: &Byte) -> Byte {
         if let Byte::Undefined = *self {
             panic!("set difference with undefined byte");
         }
-        if let Byte::Undefined = byte {
+        if let Byte::Undefined = *byte {
             panic!("set difference with undefined byte");
         }
         match *self {
-            Byte::AnyValue => match byte {
+            Byte::AnyValue => match *byte {
                 Byte::AnyValue => Byte::Int(HashSet::new()),
                 _ => Byte::AnyValue
             },
-            Byte::Int(ref set1) => match byte {
+            Byte::Int(ref set1) => match *byte {
                 Byte::AnyValue => Byte::Int(HashSet::new()),
                 Byte::Int(ref set2) =>
-                    Byte::Int(set1.difference(&set2).cloned().collect::<HashSet<u8>>()),
+                    Byte::Int(set1.difference(set2).cloned().collect::<HashSet<u8>>()),
                 _ => panic!("shouldn't be here")
             },
             _ => panic!("shouldn't be here")

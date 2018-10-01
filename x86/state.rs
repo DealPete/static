@@ -36,6 +36,10 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
         self.regs.is_subset(&state.regs) &&
         self.flags.is_subset(state.flags)
     }
+
+    fn combine(&self, state: &State<'a>) -> CombineResult<State<'a>> {
+        CombineResult::Uncombinable
+    }
 }
 
 impl<'a> State<'a> {
@@ -340,7 +344,10 @@ impl<'a> State<'a> {
         for segment in segments {
             for offset in offsets.iter() {
                 let location = 16*(segment as usize) + *offset as usize;
-                byte = byte.union(self.memory.get_byte(location));
+                byte = match self.memory.get_byte(location) {
+                    None => panic!("Trying to read from outside of memory buffer."),
+                    Some(new_byte) => byte.union(new_byte.clone())
+                }
             }
         }
         byte

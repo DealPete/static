@@ -16,16 +16,14 @@ fn main() {
 			"Failed to read into buffer.");
 
         let context = x86::dos::DOS::new(&buffer);
-        let initial_state = context.initial_state(&buffer);
 
-        let analysis = analyse::recursive_descent(
+        let listing = analyse::recursive_descent(
             &buffer,
-            initial_state,
             x86::arch::X86 {},
-            &context
+            context.load_module.file_offset
         );
 
-        analysis.print_instructions();
+        listing.print_instructions();
     } else {
 		println!("usage: dis <file-to-disassemble>");
     }

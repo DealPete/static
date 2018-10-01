@@ -1,3 +1,7 @@
+manual disassembly of pong21.com
+the file pong21.com in this directory was
+edited from the original to change the key assignment.
+
 JMP <2b>
 
 <2b>

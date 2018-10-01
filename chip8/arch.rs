@@ -1,24 +1,17 @@
 use defs::*;
 use chip8::dis;
-use chip8::sim;
-use chip8::state::{State};
 use std::fmt;
 
 #[derive(Copy, Clone)]
 pub struct Chip8 {
 }
 
-impl<'a> Architecture<State<'a>, Instruction> for Chip8 {
+impl<'a> Architecture<Instruction> for Chip8 {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<Instruction, String> {
         dis::decode_instruction(buffer, offset)
     }
 
-    fn simulate_next_instruction<C: Context<State<'a>, Instruction>>(&self, state: State<'a>,
-        context: &C, instruction: Instruction) -> SimResult<State<'a>> {
-        sim::simulate_next_instruction(state, context, instruction)
-    }
-
-    fn naive_successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
         match instruction.mnemonic {
             Mnemonic::CALL => match instruction.unpack_op1() {
                 Operand::Address(address) =>
@@ -38,20 +31,47 @@ impl<'a> Architecture<State<'a>, Instruction> for Chip8 {
         }
     }
 
+/*
     fn true_successors(&self, analysis: &Analysis<State<'a>, Instruction>, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
         let instruction = analysis.instructions.get(&offset).expect("No instruction at offset!");
-        println!("INSTRUCTION {}", instruction);
-        self.naive_successors(*analysis.instructions.get(&offset).unwrap(), offset)
+        let (mut addresses, mut labels, incomplete) = self.naive_successors(instruction.clone(), offset);
+        
+        if incomplete {
+            match search::find_value(Operand::V(0), analysis, offset) {
+                Value::Byte(byte) => {
+                    match byte {
+                        Byte::Undefined => panic!("Can't jump to undefined address!"),
+                        Byte::AnyValue => panic!("Can't jump to every address!"),
+                        Byte::Int(set) => {
+                            let operand = instruction.unpack_op2();
+                            if let Operand::Address(jump_offset) = operand {
+                                for value in set {
+                                    let destination = (value as u16 + jump_offset - 0x200) as usize;
+                                    addresses.push(destination);
+                                    labels.push(destination);
+                                }
+                            } else {
+                                panic!("indirect jump should have address as second operand");
+                            }
+                        }
+                    }
+                },
+                _ => panic!("V0 should have byte value")
+            }
+        }
+
+        (addresses, labels, incomplete)
     }
+*/
 }
 
-impl<'a> Analysis<State<'a>, Instruction> {
+impl Listing<Instruction> {
     pub fn print_instructions(&self) {
         let mut output = String::new();
         let mut last_inst_was_skip = false;
         for i in 0..0x1000 {
             if let Some(instruction) = self.instructions.get(&i) {
-                if self.flow_graph.is_labelled(i) {
+                if self.is_labelled(i) {
                     output.push_str(format!("{:4x}:   ", i + 0x200).as_str());
                 } else {
                     output.push_str("        ");
@@ -63,7 +83,7 @@ impl<'a> Analysis<State<'a>, Instruction> {
                 last_inst_was_skip = false;
                     
                 output.push_str(format!("{}{}\n",
-                    if self.flow_graph.is_indeterminate(i) {
+                    if self.is_indeterminate(i) {
                         "* "
                     } else {
                         ""
@@ -84,23 +104,6 @@ impl<'a> Analysis<State<'a>, Instruction> {
     }
 }
                 
-pub struct Interpreter {
-}
-
-impl<'a> Context<State<'a>, Instruction> for Interpreter {
-    fn entry_offset(&self, state: &State<'a>) -> usize {
-        0
-    }
-
-    fn next_inst_offset(&self, state: &State<'a>) -> usize {
-        (state.pc - 0x200) as usize
-    }
-
-    fn simulate_system_call(&self, state: State<'a>, inst: Instruction) -> Option<State<'a>> {
-        panic!("Can't simluate system calls in interpreter");
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct Instruction {
     pub mnemonic: Mnemonic,
@@ -166,6 +169,8 @@ pub enum Operand {
     DelayTimer,
     SoundTimer,
     Numeral(usize),
+    LargeNumeral(usize),
+    UserFlags,
     Pointer
 }
 
@@ -177,9 +182,11 @@ impl fmt::Display for Operand {
             &Operand::Address(address) => write!(f, "{:x}", address),
             &Operand::Byte(byte) => write!(f, "{:x}", byte),
             &Operand::KeyPress => write!(f, "Key-Press"),
-            &Operand::DelayTimer => write!(f, "Delay-timer"),
+            &Operand::DelayTimer => write!(f, "Delay-Timer"),
             &Operand::SoundTimer => write!(f, "Sound-Timer"),
             &Operand::Numeral(x) => write!(f, "Numeral-V{:X}", x),
+            &Operand::LargeNumeral(x) => write!(f, "Large-Numeral-V{:X}", x),
+            &Operand::UserFlags => write!(f, "User-Flags"),
             &Operand::Pointer => write!(f, "[I]")
         }
     }
@@ -188,5 +195,6 @@ impl fmt::Display for Operand {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Mnemonic {
     CLS, RET, JP, CALL, SE, SNE, LD, ADD, OR, AND, XOR, SUB, SHR, SUBN,
-    SHL, RND, DRW, SKP, SKNP, LDBCD, LDPTR
+    SHL, RND, DRW, SKP, SKNP, LDBCD, LDPTR,
+    SCD, SCR, SCL, EXIT, LOW, HIGH
 }

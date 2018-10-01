@@ -15,19 +15,12 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let context = chip8::arch::Interpreter {};
-        let initial_state = chip8::state::State::new(&buffer);
+        let result = analyse::analyse(
+            &buffer, chip8::arch::Chip8 {}, 0);
 
-        let (analysis, error) = analyse::analyse(
-            &buffer,
-            initial_state,
-            chip8::arch::Chip8 {},
-            &context
-        );
-
-        analysis.print_instructions();
-        if let Some(message) = error {
-            println!("{}", message);
+        match result {
+            Ok(graph) => println!("{}", graph),
+            Err(error) => println!("{}", error)
         }
     } else {
 		println!("usage: dis <file-to-disassemble>");

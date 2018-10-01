@@ -8,7 +8,7 @@ const PSP_SEGMENT: u16 = 0x75a;
 const PROGRAM_SEGMENT: u16 = 0x76a;
 
 pub struct DOS {
-    load_module: LoadModule
+    pub load_module: LoadModule
 }
 
 impl DOS {
@@ -51,15 +51,9 @@ impl DOS {
     }
 }
 
+/*
 impl<'a> Context<State<'a>, Instruction> for DOS {
-    fn entry_offset(&self, state: &State<'a>) -> usize {
-        16 * state.cs as usize
-            + state.ip as usize
-            - 16 * self.load_module.memory_segment as usize
-            + self.load_module.file_offset
-    }
-
-    fn next_inst_offset(&self, state: &State<'a>) -> usize {
+    fn next_inst_offset(state: &State<'a>) -> usize {
         let address = state.next_inst_address();
         address - 16 * self.load_module.memory_segment as usize
             + self.load_module.file_offset
@@ -78,7 +72,7 @@ impl<'a> Context<State<'a>, Instruction> for DOS {
             _ => panic!("Expected first operand of INT to be imm8")
         }
     }
-}
+} */
 
 pub struct LoadModule {
     pub file_offset: usize,

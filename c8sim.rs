@@ -1,6 +1,7 @@
-mod analyse;
-mod defs;
-mod graph;
+pub mod analyse;
+pub mod defs;
+pub mod graph;
+mod state_flow_graph;
 mod chip8;
 
 fn main() {
@@ -15,19 +16,22 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let context = chip8::arch::Interpreter {};
-        let initial_state = chip8::state::State::new(&buffer);
+        let simulator = chip8::sim::Interpreter {};
+        let initial_state = chip8::state::State::new(&buffer, 0);
 
-        let (analysis, error) = analyse::simulate(
+        let result = analyse::simulate_exhaustively(
             &buffer,
+            simulator,
             initial_state,
-            chip8::arch::Chip8 {},
-            &context
+            chip8::arch::Chip8 {}
         );
 
-        analysis.print_instructions();
-        if let Some(message) = error {
-            println!("{}", message);
+        match result {
+            Ok((state_graph, listing)) => {
+                println!("{:?}", state_graph);
+                listing.print_instructions()
+            },
+            Err(error) => println!("{}", error)
         }
     } else {
 		println!("usage: dis <file-to-disassemble>");

@@ -1,66 +1,37 @@
-use defs::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-pub struct FlowGraph<S: StateTrait<S>> {
-    indeterminates: HashSet<usize>,
-    labels: HashSet<usize>,
-    nodes: Vec<Node<S>>,
+pub struct FlowGraph {
+    nodes: Vec<Node>,
     edges: Vec<Edge>,
-    inst_map: HashMap<usize, usize>
+    inst_map: HashMap<usize, usize>,
+    data_map: HashMap<usize, usize>
 }
 
-impl<S: StateTrait<S>> fmt::Display for FlowGraph<S> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut output = String::new();
-        for i in 0..self.nodes.len() {
-            let ref node = self.nodes[i];
-            output.push_str(format!("Node {}\n========\n", i).as_str());
-            match node.insts.len() {
-                0 => (),//panic!("There shouldn't be a node with 0 instructions."),
-                1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
-                _ => output.push_str(format!("Instructions 0x{:x} through 0x{:x}\n",
-                    node.insts[0], node.insts[node.insts.len()-1]).as_str())
-            }
-            if !node.inbound_edges.is_empty() {
-                let mut inbound = String::new();
-                for edge in node.inbound_edges.iter() {
-                    inbound.push_str(format!("{} ", self.edges[*edge].get_from()).as_str());
-                }
-                output.push_str(format!("Inbound nodes: {}\n", inbound).as_str());
-            }
-            if !node.outbound_edges.is_empty() {
-                let mut outbound = String::new();
-                for edge in node.outbound_edges.iter() {
-                    outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
-                }
-                output.push_str(format!("Outbound nodes: {}\n", outbound).as_str());
-                if let Some(ref states) = node.states {
-                    for state in states {
-                        output.push_str(format!("state:\n=================\n{}\n ", state).as_str());
-                    }
-                }
-            }
-            output.push_str("\n"); 
-        }
-        write!(f, "{}", output)
-    }
-}
-
-impl<S: StateTrait<S>> FlowGraph<S> {
-    pub fn new() -> FlowGraph<S> {
+impl FlowGraph {
+    pub fn new() -> FlowGraph {
         FlowGraph {
-            indeterminates: HashSet::new(),
-            labels: HashSet::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
-            inst_map: HashMap::new()
+            inst_map: HashMap::new(),
+            data_map: HashMap::new()
         }
     }
 
-    pub fn add_node_at(&mut self, offset: usize, state: S) -> usize {
-        let mut node = Node::new(Some(vec!(state)));
+    pub fn add_node_at(&mut self, offset: usize) -> usize {
+        let mut node = Node::new();
+        node.insts.push(offset);
+        self.nodes.push(node);
+        self.inst_map.insert(offset, self.nodes.len() - 1);
+        return self.nodes.len() - 1;
+    }
+
+    pub fn add_node_with_data_index_at(&mut self, datum: usize, offset: usize)
+        -> usize {
+        self.data_map.insert(datum, self.nodes.len());
+
+        let mut node = Node::from_datum(datum);
         node.insts.push(offset);
         self.nodes.push(node);
         self.inst_map.insert(offset, self.nodes.len() - 1);
@@ -74,31 +45,15 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         }
     }
 
-    pub fn get_node_at(&self, offset: usize) -> Option<&Node<S>> {
-        match self.inst_map.get(&offset) {
+    pub fn get_node_index_for_data_index(&self, datum: usize) -> Option<usize> {
+        match self.data_map.get(&datum) {
             None => None,
-            Some(index) => Some(&self.nodes[*index])
+            Some(index) => Some(*index)
         }
     }
 
-    pub fn get_states_at(&self, index: usize) -> Option<Vec<S>> {
-        self.nodes[index].states.clone()
-    }
-    
-    pub fn set_states_at(&mut self, index: usize, states: Vec<S>) {
-        self.nodes[index].states = Some(states);
-    }
-
-    pub fn add_state_at(&mut self, index: usize, state: S) {
-        match self.nodes[index].states {
-            Some(ref mut states) => {
-                states.push(state);
-                return
-            },
-            None => ()
-        }
-
-        self.nodes[index].states = Some(vec!(state));
+    pub fn get_data_at_node_index(&self, node_index: usize) -> Vec<usize> {
+        self.nodes[node_index].data.clone()
     }
 
     pub fn has_edge(&self, source: usize, target: usize) -> bool {
@@ -124,32 +79,43 @@ impl<S: StateTrait<S>> FlowGraph<S> {
         self.nodes[node_index].insts.push(inst_offset);
     }
 
-    pub fn add_label(&mut self, offset: usize) {
-        self.labels.insert(offset);
+    pub fn add_datum(&mut self, data_index: usize, node_index: usize) {
+        self.data_map.insert(data_index, node_index);
+        self.nodes[node_index].add_datum(data_index);
     }
 
-    pub fn add_indeterminate(&mut self, offset: usize) {
-        self.indeterminates.insert(offset);
-    }
+    pub fn swap_remove_datum(&mut self, data_index: usize, swap_index: usize) {
+        let node_index = self.data_map[&data_index];
+        if !self.nodes[node_index].remove_datum(data_index) {
+            panic!(format!("Node {} does not contain data_index {}",
+                node_index, data_index));
+        }
+        
+        if data_index != swap_index {
+            let swap_datum_node_index = self.data_map[&swap_index];
+            let node = self.nodes.get_mut(swap_datum_node_index)
+                .expect("no node at swap index!");
+            if !node.remove_datum(swap_index) {
+                panic!(format!("Node {} does not contain data_index {}",
+                    swap_datum_node_index, swap_index));
+            }
+            node.add_datum(data_index);
+            self.data_map.insert(data_index, swap_datum_node_index);
+        }
 
-    pub fn is_labelled(&self, offset: usize) -> bool {
-        self.labels.contains(&offset)
-    }
-    
-    pub fn is_indeterminate(&self, offset: usize) -> bool {
-        self.indeterminates.contains(&offset)
+        self.data_map.remove(&swap_index);
     }
 
     // This function splits the node with index "node_index" into two nodes;
     // The first node contains all the instructions coming before "inst_offset".
-    // THe second node contains the instruction at "inst_offset", and all
+    // The second node contains the instruction at "inst_offset", and all
     // instructions coming after. It also adds an edge between the end of the
     // first node and the beginning of the second.
     //
     // If "inst_offset" points to the first instruction in the node,
     // then there is no need to split the node - we just return "None".
-    // Otherwise we return the index of the first node.
-    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize) -> Option<usize> {
+    // Otherwise we return the indices of the nodes.
+    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize) -> Option<(usize, usize)> {
         match self.nodes[node_index].insts.iter().position(|&r| r == inst_offset) {
             None => panic!("can't find offset to split at in node {}, instruction 0x{:x}.", node_index, inst_offset),
             Some(index) => {
@@ -157,7 +123,7 @@ impl<S: StateTrait<S>> FlowGraph<S> {
                     return None;
                 }
 
-                let mut new_node = Node::new(None);
+                let mut new_node = Node::new();
                 let new_node_index = self.nodes.len();
 
                 new_node.insts = self.nodes[node_index].insts.split_off(index);
@@ -176,102 +142,58 @@ impl<S: StateTrait<S>> FlowGraph<S> {
                     self.inst_map.insert(*inst, new_node_index);
                 }
 
-                Some(new_node_index)
+                for datum in self.nodes[new_node_index].data.iter() {
+                    self.data_map.insert(*datum, new_node_index);
+                }
+
+                Some((new_node_index, node_index))
             }
         }
     }
-
-    pub fn extend_with_state(&mut self, inst_offset: usize, new_inst_offset: usize, state: S) -> Option<S> {
-        let node_index = self.get_node_index_at(inst_offset)
-            .expect("No node at instruction offset");
-        match self.get_node_index_at(new_inst_offset) {
-            None => {
-                let new_node_index = self.add_node_at(new_inst_offset, state.clone());
-                self.add_edge(node_index, new_node_index);
-            },
-            Some(new_node_index) => {
-                match self.split_node_at(new_node_index, new_inst_offset) {
-                    None => {
-                        self.add_edge(node_index, new_node_index);
-
-                        match self.get_states_at(new_node_index) {
-                            None => (),
-                            Some(node_states) => {
-                                println!("Node has {} states:", node_states.len());
-                                /*if node_states.len() == 20 {
-                                    for state in node_states {
-                                        println!("{}", state);
-                                    }
-                                    panic!("Above are the states for a node.");
-                                }*/
-                                
-                                match self.combine_states(&state, &node_states) {
-                                    None => return None,
-                                    Some((combined_state, new_states)) => {
-                                        self.set_states_at(new_node_index, new_states);
-                                        return Some(combined_state);
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    Some(split_node_index) => {
-                        self.add_edge(node_index, split_node_index);
-                        self.add_state_at(new_node_index, state.clone());
-                    }
-                }
-            }
-        };
-
-        Some(state.clone())
-    }
-
-    fn combine_states(&self, state: &S, states: &Vec<S>) -> Option<(S, Vec<S>)> {
-        let mut new_state = state.clone();
-        let mut new_states = states.clone();
-        let mut working_states = Vec::new();
-        let mut index = 0;
-
-        while index < new_states.len() {
-            match new_state.combine(&new_states[index]) {
-                CombineResult::Subset => return None,
-                CombineResult::Uncombinable => {
-                    working_states.push(new_states[index].clone());
-                    index += 1;
-                },
-                CombineResult::Combination(combined_state) => {
-                    new_state = combined_state;
-                    for jndex in (index+1)..new_states.len() {
-                        working_states.push(new_states[jndex].clone());
-                    }
-                    new_states = working_states;
-                    working_states = Vec::new();
-                    index = 0;
-                }
-            }
-        }
-
-        new_states.push(new_state.clone());
-        return Some((new_state, new_states));
-    }
-
 }
 
-pub struct Node<S: StateTrait<S>> {
-    pub states: Option<Vec<S>>,
+pub struct Node {
+    pub data: Vec<usize>,
     pub insts: Vec<usize>,
     pub inbound_edges: HashSet<usize>,
     pub outbound_edges: HashSet<usize>
 }
 
-impl<S: StateTrait<S>> Node<S> {
-    fn new(states: Option<Vec<S>>) -> Node<S> {
+impl Node {
+    fn new() -> Node {
         Node {
-            states: states,
+            data: Vec::new(),
             insts: Vec::new(),
             inbound_edges: HashSet::new(),
             outbound_edges: HashSet::new()
         }
+    }
+
+    fn from_datum(datum: usize) -> Node {
+        Node {
+            data: vec!(datum),
+            insts: Vec::new(),
+            inbound_edges: HashSet::new(),
+            outbound_edges: HashSet::new()
+        }
+    }
+
+    pub fn add_datum(&mut self, data_index: usize) {
+        self.data.push(data_index);
+    }
+
+    pub fn remove_datum(&mut self, data_index: usize) -> bool {
+        match self.data.iter().position(|&r| r == data_index) {
+            None => false,
+            Some(index) => {
+                self.data.swap_remove(index);
+                true
+            }
+        }
+    }
+
+    pub fn get_data(&self) -> Vec<usize> {
+        self.data.clone()
     }
 }
 
@@ -298,5 +220,37 @@ impl Edge {
 
     fn set_to(&mut self, to: usize) {
         self.to = to;
+    }
+}
+
+impl fmt::Display for FlowGraph {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut output = String::new();
+        for i in 0..self.nodes.len() {
+            let ref node = self.nodes[i];
+            match node.insts.len() {
+                0 => (),//panic!("There shouldn't be a node with 0 instructions."),
+                1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
+                _ => output.push_str(format!("Instructions 0x{:x} through 0x{:x}\n",
+                    node.insts[0], node.insts[node.insts.len()-1]).as_str())
+            }
+            if !node.inbound_edges.is_empty() {
+                let mut inbound = String::new();
+                for edge in node.inbound_edges.iter() {
+                    inbound.push_str(format!("{} ", self.edges[*edge].get_from()).as_str());
+                }
+                output.push_str(format!("Inbound nodes: {}\n", inbound).as_str());
+            }
+            if !node.outbound_edges.is_empty() {
+                let mut outbound = String::new();
+                for edge in node.outbound_edges.iter() {
+                    outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
+                }
+                output.push_str(format!("Outbound nodes: {}\n", outbound).as_str());
+            }
+            output.push_str("\n"); 
+        }
+
+        write!(f, "{}", output)
     }
 }

@@ -77,8 +77,17 @@ pub fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, S
 
 fn decode_system_call(kk: u8) -> Result<Instruction, String> {
     match kk {
+        0xc0...0xcf => Ok(Instruction {
+            op1: Some(Operand::Byte(kk & 0x0f)),
+            .. Instruction::new(Mnemonic::SCD)
+        }),
         0xe0 => Ok(Instruction::new(Mnemonic::CLS)),
         0xee => Ok(Instruction::new(Mnemonic::RET)),
+        0xfb => Ok(Instruction::new(Mnemonic::SCR)),
+        0xfc => Ok(Instruction::new(Mnemonic::SCL)),
+        0xfd => Ok(Instruction::new(Mnemonic::EXIT)),
+        0xfe => Ok(Instruction::new(Mnemonic::LOW)),
+        0xff => Ok(Instruction::new(Mnemonic::HIGH)),
         _ => Err(format!("Unfamiliar system call {:x}", kk))
     }
 }
@@ -178,6 +187,11 @@ fn decode_fxkk(x: usize, kk: u8) -> Result<Instruction, String> {
             op2: Some(Operand::Numeral(x)),
             .. Instruction::new(Mnemonic::LD)
         }),
+        0x30 => Ok(Instruction {
+            op1: Some(Operand::I),
+            op2: Some(Operand::LargeNumeral(x)),
+            .. Instruction::new(Mnemonic::LD)
+        }),
         0x33 => Ok(Instruction {
             op1: Some(Operand::V(x)),
             .. Instruction::new(Mnemonic::LDBCD)
@@ -191,6 +205,16 @@ fn decode_fxkk(x: usize, kk: u8) -> Result<Instruction, String> {
             op1: Some(Operand::V(x)),
             op2: Some(Operand::Pointer),
             .. Instruction::new(Mnemonic::LDPTR)
+        }),
+        0x75 => Ok(Instruction {
+            op1: Some(Operand::UserFlags),
+            op2: Some(Operand::V(x)),
+            .. Instruction::new(Mnemonic::LD)
+        }),
+        0x85 => Ok(Instruction {
+            op1: Some(Operand::V(x)),
+            op2: Some(Operand::UserFlags),
+            .. Instruction::new(Mnemonic::LD)
         }),
         _ => Err(String::from("Unknown code"))
     }
