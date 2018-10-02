@@ -8,7 +8,7 @@ pub struct StateFlowGraph<S: StateTrait<S>> {
     edges: Vec<Edge>,
     states: Vec<S>,
     inst_map: HashMap<usize, usize>,
-    pub state_map: HashMap<usize, usize>,
+    state_map: HashMap<usize, usize>,
     live_states: Vec<usize>
 }
 
@@ -117,7 +117,6 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
     }
 
     pub fn next_live_state(&mut self) -> Option<S> {
-        println!("Total States: {}\nLive States: {:?}\n", self.states.len(), self.live_states); 
         match self.live_states.pop() {
             Some(index) => Some(self.states[index].clone()),
             None => None
@@ -141,7 +140,6 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
     }
 
     fn add_state(&mut self, mut state: S, node_index: usize) {
-        println!("adding state to node {}.", node_index);
         let mut state_indices = self.get_states_at_node_index(node_index);
 
         let mut index = 0;
@@ -162,7 +160,6 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
         }
 
         let state_index = self.states.len();
-        println!("state_index: {}", state_index);
         self.state_map.insert(state_index, node_index);
         self.nodes[node_index].add_state(state_index);
         self.live_states.push(state_index);
@@ -172,13 +169,6 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
     fn remove_state(&mut self, state_index: usize) {
         let final_index = self.states.len() - 1;
         let node_index = self.state_map[&state_index];
-
-        println!("There are {} states.", final_index + 1);
-        println!("state_index = {}.", state_index);
-        println!("There are {} nodes.", self.nodes.len() - 1);
-        println!("state_index is in node {}", node_index);
-
-        println!("\nNode {} has states {:?}", node_index, self.nodes[node_index].states);
 
         if !self.nodes[node_index].remove_state(state_index) {
             panic!(format!("Node {} does not contain state_index {}",
@@ -229,7 +219,6 @@ impl Node {
     }
 
     fn from(offset: usize, state_index: usize) -> Node {
-        println!("adding state {} to this node", state_index);
         Node {
             states: [state_index].iter().cloned().collect(),
             insts: vec!(offset),
@@ -314,8 +303,11 @@ impl<S: StateTrait<S>> fmt::Display for StateFlowGraph<S> {
 impl<S: StateTrait<S>> fmt::Debug for StateFlowGraph<S> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::new();
-        output.push_str("========= Flow Graph =========\n\n");
+        output.push_str("\n========= Flow Graph =========\n\n");
+        output.push_str(format!("Total States: {}\n", self.states.len()).as_str());
+        output.push_str(format!("Live States: {:?}\n", self.live_states).as_str()); 
         for i in 0..self.nodes.len() {
+            output.push_str("========\n");
             output.push_str(format!("Node {}\n========\n", i).as_str());
             let ref node = self.nodes[i];
             match node.insts.len() {
@@ -339,7 +331,8 @@ impl<S: StateTrait<S>> fmt::Debug for StateFlowGraph<S> {
                 output.push_str(format!("Outbound nodes: {}\n", outbound).as_str());
             }
             for index in node.states.iter() {
-                output.push_str(format!("{:?}", self.states[*index].debug_string()).as_str());
+                output.push_str(format!("\n==== STATE {} ====\n", index).as_str());
+                output.push_str(self.states[*index].debug_string().as_str());
             }
         }
 

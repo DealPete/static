@@ -1,10 +1,10 @@
 use defs::get_word_le;
 
 #[derive(PartialEq)]
-enum modes {
-    MODE_NORMAL,
-    MODE_REM,
-    MODE_QUOTE
+enum Mode {
+    Normal,
+    Remark,
+    Quote
 }
 
 pub fn list(memory_buffer : &[u8]) -> String {
@@ -12,10 +12,9 @@ pub fn list(memory_buffer : &[u8]) -> String {
     let load_offset = get_word_le(memory_buffer, 0x42) as usize;
     let code_offset = get_word_le(memory_buffer, 0x48) as usize;
     let mut next_line = load_offset;
-    let mut offset = code_offset;
 
-    while true {
-        let mut mode = modes::MODE_NORMAL;
+    loop {
+        let mut mode = Mode::Normal;
         let mut offset = next_line - load_offset + code_offset;
         next_line = get_word_le(memory_buffer, offset) as usize;
         offset += 2;
@@ -28,13 +27,13 @@ pub fn list(memory_buffer : &[u8]) -> String {
         listing.push_str(format!("{} ", line_number).as_str());
         offset += 2;
 
-        while true {
+        loop {
             let next_byte = memory_buffer[offset];
             if next_byte == 0 {
                 break;
             }
 
-            if next_byte >= 0x80  && mode == modes::MODE_NORMAL {
+            if next_byte >= 0x80  && mode == Mode::Normal {
                 match expand(next_byte) {
                     Some(string) => {
                         listing.push_str(string.as_str());
@@ -46,23 +45,22 @@ pub fn list(memory_buffer : &[u8]) -> String {
                     }
                 }
                 if next_byte == 0x8f {
-                    mode = modes::MODE_REM;
+                    mode = Mode::Remark;
                 }
             } else {
                 listing.push(memory_buffer[offset] as char);
             }
 
             if next_byte == 34 {
-                if mode == modes::MODE_NORMAL {
-                    mode = modes::MODE_QUOTE;
+                if mode == Mode::Normal {
+                    mode = Mode::Quote;
                 } else {
-                    mode = modes::MODE_NORMAL;
+                    mode = Mode::Normal;
                 }
             }
             offset += 1;
         }
 
-        offset += 1;
         listing.push('\n');
     }
 

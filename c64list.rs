@@ -1,5 +1,4 @@
-mod defs;
-mod graph;
+pub mod defs;
 mod c64;
 
 fn main() {

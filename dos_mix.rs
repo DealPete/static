@@ -1,8 +1,7 @@
-pub mod analyse;
-pub mod defs;
-pub mod graph;
-pub mod state_flow_graph;
-mod chip8;
+mod analyse;
+mod defs;
+mod graph;
+mod x86;
 
 fn main() {
     use std::env;
@@ -16,8 +15,12 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
+        let context = x86::dos::DOS::new(&buffer);
+
         let result = analyse::analyse(
-            &buffer, chip8::arch::Chip8 {}, 0);
+            &buffer, x86::arch::X86 {},
+            context.load_module.file_offset
+        );
 
         match result {
             Ok(graph) => println!("{}", graph),

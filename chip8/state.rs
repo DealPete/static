@@ -280,7 +280,7 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
             }
             line
         };
-        format!("{}{}{}{}{}", line1, line2, line3, line4, line5)
+        format!("{}{}{}{}{}\n", line1, line2, line3, line4, line5)
     }
 }
 

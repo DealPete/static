@@ -100,8 +100,9 @@ pub fn simulate_exhaustively<Z: SimulatorTrait<S, I>, S: StateTrait<S>, I: Instr
     let mut instructions = HashMap::new();
 
     while let Some(mut state) = graph.next_live_state() {
+        println!("{:?}", graph);
+        println!("Using state:\n{}", state.debug_string());
         loop {
-            println!("state_map: {:?}", graph.state_map);
             let inst_offset = Z::next_inst_offset(&state);
             let inst = match instructions.get(&inst_offset) {
                 None => match architecture.decode_instruction(file_buffer, inst_offset) {
@@ -148,10 +149,6 @@ pub fn simulate_exhaustively<Z: SimulatorTrait<S, I>, S: StateTrait<S>, I: Instr
             }
         }
     }
-/*
-    for state in graph.states.clone() {
-        println!("{}", state);
-    }
-*/
+
     Ok((graph, listing))
 }
