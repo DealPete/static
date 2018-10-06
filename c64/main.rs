@@ -1,5 +1,6 @@
 pub mod defs;
-mod c64;
+mod lex;
+mod parse;
 
 fn main() {
     use std::env;
@@ -13,10 +14,11 @@ fn main() {
 		file.read_to_end(&mut buffer).expect(
 			"Failed to read into buffer.");
 
-        let listing = c64::list::list(&buffer);
+        let lexical_program = lex::lex(&buffer);
+        let parsed_program = parse::parse(lexical_program);
 
-        println!("{}", listing);
+        println!("{:?}", parsed_program);
     } else {
-		println!("usage: c64list <file-to-list>");
+		println!("usage: c64list <file-to-analyse>");
     }
 }

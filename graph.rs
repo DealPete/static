@@ -87,8 +87,7 @@ impl FlowGraph {
     pub fn swap_remove_datum(&mut self, data_index: usize, swap_index: usize) {
         let node_index = self.data_map[&data_index];
         if !self.nodes[node_index].remove_datum(data_index) {
-            panic!(format!("Node {} does not contain data_index {}",
-                node_index, data_index));
+            panic!("Node {} does not contain data_index {}", node_index, data_index);
         }
         
         if data_index != swap_index {
@@ -96,8 +95,8 @@ impl FlowGraph {
             let node = self.nodes.get_mut(swap_datum_node_index)
                 .expect("no node at swap index!");
             if !node.remove_datum(swap_index) {
-                panic!(format!("Node {} does not contain data_index {}",
-                    swap_datum_node_index, swap_index));
+                panic!("Node {} does not contain data_index {}",
+                    swap_datum_node_index, swap_index);
             }
             node.add_datum(data_index);
             self.data_map.insert(data_index, swap_datum_node_index);
