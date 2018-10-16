@@ -1,7 +1,5 @@
-pub mod analyse;
 pub mod defs;
-pub mod graph;
-mod state_flow_graph;
+mod exhaust;
 mod chip8;
 
 fn main() {
@@ -18,12 +16,14 @@ fn main() {
 
         let simulator = chip8::sim::Interpreter {};
         let initial_state = chip8::state::State::new(&buffer, 0);
+        let log_type = exhaust::LogType::Full;
 
-        let result = analyse::simulate_exhaustively(
+        let result = exhaust::simulate_exhaustively(
             &buffer,
             simulator,
             initial_state,
-            chip8::arch::Chip8 {}
+            chip8::arch::Chip8 {},
+            log_type,
         );
 
         match result {

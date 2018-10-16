@@ -87,7 +87,9 @@ pub enum SimResult<S: StateTrait<S>> {
 
 pub enum CombineResult<S: StateTrait<S>> {
     Subset,
+    Superset,
     Uncombinable,
+    ExtendSelf(S),
     Combination(S)
 }
 
@@ -243,6 +245,13 @@ impl Value {
             }
         }
     }
+
+    pub fn len(&self) -> usize {
+        match self {
+            &Value::Word(ref word) => word.len(),
+            &Value::Byte(ref byte) => byte.len()
+        }
+    }
 }
 
 impl fmt::Display for Value {
@@ -329,7 +338,7 @@ impl Word {
 
     pub fn len(&self) -> usize {
         match *self {
-            Word::Undefined => panic!("taking the length of undefined word."),
+            Word::Undefined => 0,
             Word::AnyValue => 65536,
             Word::Int(ref words) => words.len(),
             Word::Bytes(ref bytel, ref byteh) =>
@@ -567,11 +576,36 @@ impl Byte {
         Byte::Int(set)
     }
 
+    pub fn from_range(lower: u8, upper: u8) -> Byte {
+        let mut set = HashSet::new();
+        for byte in lower..upper+1 {
+            set.insert(byte);
+        }
+        Byte::Int(set)
+    }
+
     pub fn len(&self) -> usize {
         match *self {
-            Byte::Undefined => panic!("taking the length of undefined byte."),
+            Byte::Undefined => 0,
             Byte::AnyValue => 256,
             Byte::Int(ref bytes) => bytes.len(),
+        }
+    }
+
+    pub fn max(&self) -> u8 {
+        match *self {
+            Byte::Undefined => panic!("taking the maximum of undefined byte."),
+            Byte::AnyValue => 0xff,
+            Byte::Int(ref bytes) => {
+                let mut max = 0;
+                for byte in bytes.iter() {
+                    if *byte > max {
+                        max = *byte;
+                    }
+                }
+                
+                max
+            }
         }
     }
 

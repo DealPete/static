@@ -15,6 +15,12 @@ pub struct State<'a> {
     pub memory: Memory<'a>
 }
 
+static COMBINABLE_OPERANDS: [Operand; 19] = [Operand::V(0), Operand::V(1),
+    Operand::V(2), Operand::V(3), Operand::V(4), Operand::V(5), Operand::V(6),
+    Operand::V(7), Operand::V(8), Operand::V(9), Operand::V(0xa), Operand::V(0xb),
+    Operand::V(0xc), Operand::V(0xd), Operand::V(0xe), Operand::V(0xf), Operand::I,
+    Operand::DelayTimer, Operand::SoundTimer];
+
 impl<'a> State<'a> {
     pub fn new(initial_memory: &'a [u8], start_offset: u16) -> State<'a> {
         State {
@@ -57,10 +63,8 @@ impl<'a> State<'a> {
             Operand::Byte(byte) => Byte::new(byte),
             Operand::KeyPress => Byte::from_vec(vec![0x0, 0x1, 0x2, 0x3, 0x4,
                 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf]),
-            Operand::DelayTimer => Byte::AnyValue,
-                //self.delay_timer.clone(),
-            Operand::SoundTimer => Byte::AnyValue,
-                //self.sound_timer.clone(),
+            Operand::DelayTimer => self.delay_timer.clone(),
+            Operand::SoundTimer => self.sound_timer.clone(),
             Operand::Numeral(_) => Byte::Undefined,
             _ => panic!("unimplemented byte type.")
         }
@@ -87,11 +91,27 @@ impl<'a> State<'a> {
                 new_v[x] = byte;
                 State { V: new_v, .. self }
             },
-            Operand::DelayTimer => State { delay_timer: byte, .. self },
-            Operand::SoundTimer => State { sound_timer: byte, .. self },
+            Operand::DelayTimer => State {
+                delay_timer: Byte::from_range(0, byte.max()),
+                .. self
+            },
+            Operand::SoundTimer => State {
+                sound_timer: Byte::from_range(0, byte.max()),
+                .. self
+            },
             Operand::I => State { I: byte.to_word(), .. self },
             _ => panic!("unimplemented target for set_byte.")
         }
+    }
+
+    pub fn weight(&self) -> usize {
+        let mut weight = 0;
+        for reference in COMBINABLE_OPERANDS.iter() {
+            let operand = *reference;
+            weight += self.get_value(operand).len();
+        }
+
+        weight
     }
 }
 
@@ -151,109 +171,121 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
             }
         }
 
-        let mut is_subset = true;
-        let mut comparable = true;
-        let mut differing_operand = None;
-
-        for i in 0..16 {
-            if !self.V[i].is_subset(&state.V[i]) {
-                if let None = differing_operand {
-                    differing_operand = Some(Operand::V(i));
-                    is_subset = false;
-                } else {
+        let memory1 = self.memory.get_deltas();
+        let memory2 = state.memory.get_deltas();
+        for (address, value1) in memory1 {
+            match memory2.get(&address) {
+                None => return CombineResult::Uncombinable,
+                Some(value2) => if !(value1.is_subset(value2) &&
+                    value2.is_subset(value1)) {
                     return CombineResult::Uncombinable;
-                }
-            } else {
-                if !state.V[i].is_subset(&self.V[i]) {
-                    if let None = differing_operand {
-                        differing_operand = Some(Operand::V(i));
-                    } else {
-                        if !is_subset {
-                            return CombineResult::Uncombinable;
-                        } else {
-                            comparable = false;
-                        }
-                    }
                 }
             }
         }
         
-        if !self.I.is_subset(&state.I) {
-            if let None = differing_operand {
-                differing_operand = Some(Operand::I);
-                is_subset = false;
-            } else {
-                return CombineResult::Uncombinable;
-            }
-        } else {
-            if !state.I.is_subset(&self.I) {
-                if let None = differing_operand {
-                    differing_operand = Some(Operand::I);
-                } else {
-                    if !is_subset {
-                        return CombineResult::Uncombinable;
-                    } else {
-                        comparable = false;
-                    }
-                }
-            }
-        }
-        if !self.delay_timer.is_subset(&state.delay_timer) {
-            if let None = differing_operand {
-                differing_operand = Some(Operand::DelayTimer);
-                is_subset = false;
-            } else {
-                return CombineResult::Uncombinable;
-            }
-        } else {
-            if !state.delay_timer.is_subset(&self.delay_timer) {
-                if let None = differing_operand {
-                    differing_operand = Some(Operand::DelayTimer);
-                } else {
-                    if !is_subset {
-                        return CombineResult::Uncombinable;
-                    } else {
-                        comparable = false;
-                    }
-                }
-            }
-        }
-        if !self.sound_timer.is_subset(&state.sound_timer) {
-            if let None = differing_operand {
-                differing_operand = Some(Operand::SoundTimer);
-                is_subset = false;
-            } else {
-                return CombineResult::Uncombinable;
-            }
-        } else {
-            if !state.sound_timer.is_subset(&self.sound_timer) {
-                if let None = differing_operand {
-                    differing_operand = Some(Operand::SoundTimer);
-                } else {
-                    if !is_subset {
-                        return CombineResult::Uncombinable;
-                    } else {
-                        comparable = false;
-                    }
+        for (address, value1) in memory2 {
+            match memory1.get(&address) {
+                None => return CombineResult::Uncombinable,
+                Some(value2) => if !(value1.is_subset(value2) &&
+                    value2.is_subset(value1)) {
+                    return CombineResult::Uncombinable;
                 }
             }
         }
 
-        if is_subset {
-            return CombineResult::Subset;
+        // We use subset, superset, subdiff, and superdiff as follows:
+        //
+        // subset = true, subdiff = None:
+        // self is a subset of state.
+        //
+        // superset = true, superdiff = None:
+        // state is a subset of Self.
+        //
+        // subset = true, subdiff = Some(operand):
+        // All the values in self are subsets of the corresponding
+        // values in state, with the exception of operand.
+        //
+        // superset = true, superdiff = Some(operand):
+        // All the values in state are subsets of the corresponding
+        // values in self, with the exception of operand.
+        //
+        // subset = false:
+        // self is not a subset of state.
+        //
+        // superset = false:
+        // state is not a subset of self.
+
+        let mut subset = true;
+        let mut superset = true;
+        let mut subdiff = None;
+        let mut superdiff = None;
+
+        for reference in COMBINABLE_OPERANDS.iter() {
+            let operand = *reference;
+            if subset && !self.get_value(operand).is_subset(&state.get_value(operand)) {
+                match subdiff {
+                    None => subdiff = Some(operand),
+                    Some(_) => subset = false
+                }
+            }
+            if superset && !state.get_value(operand).is_subset(&self.get_value(operand)) {
+                match superdiff {
+                    None => superdiff = Some(operand),
+                    Some(_) => superset = false
+                }
+            }
+
+            if !(subset || superset) {
+                return CombineResult::Uncombinable;
+            }
         }
 
-        if !comparable {
-            return CombineResult::Uncombinable;
-        }
+        //println!("{}\n{}\n", self.debug_string(), state.debug_string());
+        //println!("subset: {}\t superset: {}\t subdiff: {:?}\t superdiff: {:?}",
+        //    subset, superset, subdiff, superdiff);
 
-        match differing_operand {
-            None => CombineResult::Combination(self.clone()),
-            Some(operand) =>
-                CombineResult::Combination(
-                    self.clone().set_value(operand,
-                        self.get_value(operand).union(
-                            state.get_value(operand))))
+        if subset {
+            match subdiff {
+                None => CombineResult::Subset,
+                Some(operand) => {
+                    match superdiff {
+                        Some(_) => {
+                            let old_value = self.get_value(operand);
+                            let new_value = old_value.union(state.get_value(operand));
+                            if superset {
+                                CombineResult::Combination(self.clone()
+                                    .set_value(operand, new_value))
+                            } else if new_value.is_subset(&self.get_value(operand)) {
+                                CombineResult::Uncombinable
+                            } else {
+                                CombineResult::ExtendSelf(self.clone()
+                                    .set_value(operand, new_value))
+                            }
+                        },
+                        None => CombineResult::Superset
+                    }
+                }
+            }
+        } else {
+            match superdiff {
+                None => CombineResult::Superset,
+                Some(_) => {
+                    CombineResult::Uncombinable
+                    /*
+                    match subdiff {
+                        None => panic!("error in state combination algorithm"),
+                        Some(operand1) => {
+                            if operand1 != operand2 {
+                                return CombineResult::Uncombinable;
+                            }
+                            CombineResult::ExtendOther(state.clone()
+                                .set_value(operand, state.get_value(operand)
+                                .union(state.get_value(operand))))
+                        }
+                    }
+                    */
+                }
+            }
         }
     }
 

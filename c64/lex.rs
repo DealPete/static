@@ -65,7 +65,7 @@ fn lex_line( bytes: Vec<u8> ) -> Vec<Lexeme> {
                     offset += 1;
                 }
                 offset += 1;
-                lexemes.push(Lexeme::String(string));
+                lexemes.push(Lexeme::Literal(Literal::String(string)));
             },
             0x28 => {
                 lexemes.push(Lexeme::OpenParen);
@@ -81,12 +81,12 @@ fn lex_line( bytes: Vec<u8> ) -> Vec<Lexeme> {
             },
             0x2e | 0x30...0x39 => {
                 let mut byte = bytes[offset];
-                let mut characteristic: u16 = 0;
+                let mut characteristic: isize = 0;
                 let mut mantissa: f32 = 0.0;
 
                 while is_numeral(byte) {
                     characteristic *= 10;
-                    characteristic += (bytes[offset] - 0x30) as u16;
+                    characteristic += (bytes[offset] - 0x30) as isize;
                     offset += 1;
 
                     if offset >= bytes.len() {
@@ -110,9 +110,12 @@ fn lex_line( bytes: Vec<u8> ) -> Vec<Lexeme> {
 
                         byte = bytes[offset];
                     }
-                    lexemes.push(Lexeme::Float(characteristic as f32 + mantissa));
+                    lexemes
+                        .push(Lexeme::Literal(Literal::
+                            Float(characteristic as f32 + mantissa)));
                 } else {
-                    lexemes.push(Lexeme::Int(characteristic as u16));
+                    lexemes
+                        .push(Lexeme::Literal(Literal::Int(characteristic)));
                 }
             },
             0x3a => {
@@ -143,26 +146,66 @@ fn lex_line( bytes: Vec<u8> ) -> Vec<Lexeme> {
                 }
 
                 if offset < bytes.len() && byte == 0x24 {
-                    lexemes.push(Lexeme::StrVar(String::from_utf8(name)
-                        .expect("variable name not utf8")));
+                    lexemes.push(Lexeme::Var(Var::String(String::from_utf8(name)
+                        .expect("variable name not utf8"))));
                     offset += 1;
                 } else if offset < bytes.len() && byte == 0x25 {
-                    lexemes.push(Lexeme::IntVar(String::from_utf8(name)
-                        .expect("variable name not utf8")));
+                    lexemes.push(Lexeme::Var(Var::Int(String::from_utf8(name)
+                        .expect("variable name not utf8"))));
                     offset += 1;
                 } else {
-                    lexemes.push(Lexeme::NumVar(String::from_utf8(name)
-                        .expect("variable name not utf8")));
+                    lexemes.push(Lexeme::Var(Var::Num(String::from_utf8(name)
+                        .expect("variable name not utf8"))));
                 }
             },
-            0x80...0x8e | 0x90...0xcb => {
+            0x80...0x8e | 0x90...0xa9 | 0xb5...0xcb => {
                 lexemes.push(Lexeme::Keyword(bytes[offset]));
                 offset += 1;
             },
             0x8f => {
                 lexemes.push(Lexeme::Remark(bytes[offset..].to_vec()));
                 break;
-            }
+            },
+            0xaa => {
+                lexemes.push(Lexeme::Operator(Op::Add));
+                offset += 1;
+            },
+            0xab => {
+                lexemes.push(Lexeme::Operator(Op::Sub));
+                offset += 1;
+            },
+            0xac => {
+                lexemes.push(Lexeme::Operator(Op::Mult));
+                offset += 1;
+            },
+            0xad => {
+                lexemes.push(Lexeme::Operator(Op::Div));
+                offset += 1;
+            },
+            0xae => {
+                lexemes.push(Lexeme::Operator(Op::Exp));
+                offset += 1;
+            },
+            0xaf => {
+                lexemes.push(Lexeme::Operator(Op::And));
+                offset += 1;
+            },
+            0xb0 => {
+                lexemes.push(Lexeme::Operator(Op::Or));
+                offset += 1;
+            },
+            0xb1 => {
+                lexemes.push(Lexeme::Operator(Op::GreaterThan));
+                offset += 1;
+            },
+            0xb2 => {
+                lexemes.push(Lexeme::Operator(Op::Equals));
+                offset += 1;
+            },
+            0xb3 => {
+                lexemes.push(Lexeme::Operator(Op::LessThan));
+                offset += 1;
+            },
             _ => {
                 lexemes.push(Lexeme::Junk(bytes[offset..].to_vec()));
                 break;

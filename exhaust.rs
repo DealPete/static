@@ -1,7 +1,14 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use defs::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;
+
+pub enum LogType {
+    None,
+    Full
+}
 
 pub struct StateFlowGraph<S: StateTrait<S>> {
     nodes: Vec<Node>,
@@ -117,6 +124,21 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
     }
 
     pub fn next_live_state(&mut self) -> Option<S> {
+/*        println!("Total states: {}\t Total live states: {}", self.states.len(),
+            self.live_states.len());
+        let length = self.live_states.len();
+        if length == 0 {
+            None
+        } else {
+            match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Err(_) => panic!("SystemTime before UNIX EPOCH!"),
+                Ok(n) => {
+                    let live_states_index = n.as_secs() as usize % length;
+                    let state_index = self.live_states.remove(live_states_index);
+                    Some(self.states[state_index].clone())
+                }
+            }
+        }*/
         match self.live_states.pop() {
             Some(index) => Some(self.states[index].clone()),
             None => None
@@ -148,7 +170,16 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
             let state_index = state_indices[index];
             match state.combine(&self.states[state_index]) {
                 CombineResult::Subset => return,
+                CombineResult::Superset => {
+                    self.remove_state(state_index);
+                    state_indices = self.get_states_at_node_index(node_index);
+                    index = 0;
+                },
                 CombineResult::Uncombinable => index += 1,
+                CombineResult::ExtendSelf(extended_state) => {
+                    state = extended_state;
+                    index = 0;
+                },
                 CombineResult::Combination(combined_state) => {
                     state = combined_state;
                     self.remove_state(state_index);
@@ -175,17 +206,22 @@ impl<S: StateTrait<S>> StateFlowGraph<S> {
                 node_index, state_index));
         }
         
-        if state_index != final_index {
-            let final_index_node_index = self.state_map[&final_index];
-            let node = self.nodes.get_mut(final_index_node_index)
-                .expect("no node at final index!");
-            if !node.remove_state(final_index) {
-                panic!(format!("Node {} does not contain state_index {}",
-                    final_index_node_index, final_index));
-            }
-            node.add_state(state_index);
-            self.state_map.insert(state_index, final_index_node_index);
+        if state_index == final_index {
+            self.state_map.remove(&final_index);
+            self.states.remove(final_index);
+            self.live_states.retain(|&x| x != final_index);
+            return;
         }
+
+        let final_index_node_index = self.state_map[&final_index];
+        let node = self.nodes.get_mut(final_index_node_index)
+            .expect("no node at final index!");
+        if !node.remove_state(final_index) {
+            panic!(format!("Node {} does not contain state_index {}",
+                final_index_node_index, final_index));
+        }
+        node.add_state(state_index);
+        self.state_map.insert(state_index, final_index_node_index);
 
         self.state_map.remove(&final_index);
         self.states.swap_remove(state_index);
@@ -340,4 +376,65 @@ impl<S: StateTrait<S>> fmt::Debug for StateFlowGraph<S> {
     }
 }
 
+pub fn simulate_exhaustively<Z: SimulatorTrait<S, I>, S: StateTrait<S>, I: InstructionTrait, A: Architecture<I>>(file_buffer: &Vec<u8>, simulator: Z, initial_state: S, architecture: A, log_type: LogType) -> Result<(StateFlowGraph<S>, Listing<I>), String> {
+    let entry_offset = Z::next_inst_offset(&initial_state);
+    let mut listing = Listing::new(entry_offset);
+    let mut graph = StateFlowGraph::new(entry_offset, initial_state);
+    let mut instructions = HashMap::new();
 
+    while let Some(mut state) = graph.next_live_state() {
+        if let LogType::Full = log_type {
+            println!("{:?}", graph);
+            println!("Using state:\n{}", state.debug_string());
+        }
+
+        loop {
+            let inst_offset = Z::next_inst_offset(&state);
+            let inst = match instructions.get(&inst_offset) {
+                None => match architecture.decode_instruction(file_buffer, inst_offset) {
+                    Ok(instruction) => instruction,
+                    Err(err) => return Err(err)
+                },
+                Some(instruction) => *instruction
+            };
+            
+            instructions.insert(inst_offset, inst);
+            listing.instructions.insert(inst_offset, inst);
+        
+            match simulator.simulate_next_instruction(state, inst) {
+                SimResult::Error(state, error) => {
+                    println!("{}", state.debug_string());
+                    return Err(error)
+                },
+                SimResult::End => break,
+                SimResult::State(next_state) => {
+                    let next_inst_offset = Z::next_inst_offset(&next_state);
+                    let node_index = graph.get_node_index_at(inst_offset)
+                        .expect(format!("No node at instruction offset {}", inst_offset).as_str());
+                    match graph.get_node_index_at(next_inst_offset) {
+                        None => {
+                            graph.insert_inst(node_index, next_inst_offset);
+                            state = next_state;
+                        },
+                        Some(next_inst_node_index) => {
+                            if next_inst_node_index != node_index {
+                                graph.extend_with_state(inst_offset, Z::next_inst_offset(&next_state), next_state);
+                                break;
+                            } else {
+                                state = next_state;
+                            }
+                        }
+                    }
+                },
+                SimResult::Branch((new_states, _)) => {
+                    for new_state in new_states {
+                        graph.extend_with_state(inst_offset, Z::next_inst_offset(&new_state), new_state) 
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok((graph, listing))
+}

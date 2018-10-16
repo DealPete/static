@@ -159,7 +159,7 @@ impl fmt::Display for Instruction {
     }
 }
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Operand {
     I,
     V(usize),

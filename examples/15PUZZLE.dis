@@ -39,9 +39,9 @@ display_board() {
 
 // move empty tile right to column of pressed tile.
 246:   LD V4, 3
-       AND V4, VE
+       AND V4, VE  // v4 <- column of empty tile (0, 1, 2, 3)
        LD V5, 3
-       AND V5, VD
+       AND V5, VD  // v5 <- column of press (0, 1, 2, 3)
        SNE V4, V5
            RET
        SNE V4, 3

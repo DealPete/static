@@ -1,7 +1,6 @@
 pub mod defs;
 mod lex;
 mod parse;
-mod analyse;
 
 fn main() {
     use std::env;
@@ -16,10 +15,7 @@ fn main() {
 			"Failed to read into buffer.");
 
         let lexical_program = lex::lex(&buffer);
-        let parsed_program = parse::parse(lexical_program);
-
-        println!("{}", parsed_program);
-        //analyse::analyse(parsed_program);
+        println!("{:?}", lexical_program);
     } else {
 		println!("usage: c64list <file-to-analyse>");
     }

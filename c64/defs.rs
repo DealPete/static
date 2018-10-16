@@ -1,50 +1,194 @@
 use std::fmt;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Program {
     pub statements: Vec<Statement>,
-    pub labels: Vec<usize>,
+    pub labels: HashMap<usize, u16>,
     pub data: Vec<u16>
 }
 
 #[derive(Debug)]
 pub enum Statement {
-    Assignment(Expr),
+    Assignment(Var, Expr),
     Command(Command),
-    IfThen(Comparison, Command)
+    IfThen(Expr, Vec<Statement>),
+    Remark,
+    Dummy
 }
 
 #[derive(Debug)]
 pub enum Expr {
-    String(String)
+    Literal(Literal),
+    Var(Var),
+    BinaryOp(Op, Box<Expr>, Box<Expr>),
+    Function(u8, Vec<Expr>),
+    Dummy
 }
 
 #[derive(Debug)]
 pub enum Command {
-    PRINT(Vec<Expr>),
-    INPUT(String, Var),
-    GOTO(u16)
+    CLR,
+    GET(Var),
+    GOSUB(u16),
+    GOTO(u16),
+    INPUT(Option<Literal>, Vec<Var>),
+    PRINT(Vec<PrintItem>),
+    SYS(Expr)
 }
 
 #[derive(Debug)]
-pub enum Comparison {
-    LessThan(Expr, Expr),
-    GreaterThan(Expr, Expr),
-    Equal(Expr, Expr),
-    NotEqual(Expr, Expr)
+pub enum PrintItem {
+    StrExpr(Expr),
+    TAB(Expr),
+    SPC(Expr),
+    SemiColon,
+    Comma
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Var {
-    Int(String),
-    String(String)
+    Num(String),
+    String(String),
+    Int(String)
 }
 
 #[derive(Debug)]
-pub enum Constant {
-    Int(i16),
+pub enum Literal {
+    Int(isize),
     Float(f32),
     String(Vec<u8>)
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut output = String::new();
+        for (index, statement) in self.statements.iter().enumerate() {
+            if let Some(line_number) = self.labels.get(&index) {
+                output.push_str(&format!("{}:", line_number));
+            }
+            output.push_str(&format!("\t{}\n", statement));
+        }
+
+        write!(f, "{}", output)
+    }
+}
+
+impl fmt::Display for Statement {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Statement::Assignment(ref var, ref expr) => write!(f, "{} = {}", var, expr),
+            Statement::Command(ref command) => write!(f, "{}", command),
+            Statement::IfThen(ref expr, ref statements) => write!(f, "{}",
+                format_if_then(expr, statements, 1)),
+            Statement::Remark => write!(f, "REM ..."),
+            Statement::Dummy => write!(f, "(dummy)")
+        }
+    }
+}
+
+fn format_if_then(expr: &Expr, statements: &Vec<Statement>, depth: usize) -> String {
+    let mut output = String::new();    
+    output.push_str(format!("IF {} THEN:", expr).as_str());
+    for statement in statements {
+        output.push('\n');
+        match *statement {
+            Statement::IfThen(ref sub_expr, ref sub_statements) =>
+                output.push_str(format_if_then(sub_expr, sub_statements, depth + 1).as_str()),
+            _ => {
+                for _i in 0..depth+1 {
+                    output.push('\t');
+                }
+                output.push_str(format!("{}", statement).as_str())
+            }
+        }
+    }
+
+    output
+}
+
+impl fmt::Display for Command {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Command::CLR => write!(f, "CLR"),
+            Command::GET(ref variable) => write!(f, "GET {}", variable),
+            Command::INPUT(ref prompt, ref vars) => {
+                let mut output = match *prompt {
+                    None => String::from("INPUT "),
+                    Some(ref prompt) => format!("INPUT {}; ", prompt)
+                };
+
+                for var in vars {
+                    output.push_str(format!("{}, ", var).as_str());
+                }
+                write!(f, "{}", output)
+            },
+            Command::GOTO(line) => write!(f, "GOTO {}", line),
+            Command::GOSUB(line) => write!(f, "GOSUB {}", line),
+            Command::PRINT(ref printitems) => {
+                let mut output = String::from("PRINT ");
+                for item in printitems {
+                    output.push_str(format!("{}", item).as_str());
+                }
+                write!(f, "{}", output)
+            },
+            Command::SYS(ref line) => write!(f, "SYS {}", line)
+        }
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Expr::Literal(ref literal) => write!(f, "{}", literal),
+            Expr::Var(ref var) => write!(f, "{}", var),
+            Expr::BinaryOp(ref op, ref expr1, ref expr2) =>
+                write!(f, "({} {} {})", expr1, op, expr2),
+            Expr::Function(index, ref exprs) => {
+                let mut expressions = Vec::new();
+                for expr in exprs {
+                    expressions.push(format!("{}", expr));
+                }
+                write!(f, "{}({})", Lexeme::Keyword(index), expressions.join(", "))
+            },
+            Expr::Dummy => write!(f, "(dummy)")
+        }
+    }
+}
+
+impl fmt::Display for Var {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Var::Num(ref string) => write!(f, "{}", string),
+            Var::String(ref string) => write!(f, "{}$", string),
+            Var::Int(ref string) => write!(f, "{}%", string)
+        }
+    }
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Literal::Int(int) => write!(f, "{}", int),
+            Literal::Float(float) => write!(f, "{}", float),
+            Literal::String(ref bytes) => match from_petscii(bytes) {
+                Ok(string) => write!(f, "\"{}\"", string),
+                Err(_) => write!(f, "String: {:?}", bytes)
+            }
+        }
+    }
+}
+
+impl fmt::Display for PrintItem {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", match *self {
+            PrintItem::StrExpr(ref expr) => format!("{}", expr),
+            PrintItem::TAB(ref tabs) => format!("TAB({})", tabs),
+            PrintItem::SPC(ref spaces) => format!("SPC({})", spaces),
+            PrintItem::SemiColon => String::from("; "),
+            PrintItem::Comma => String::from(", ")
+        })
+    }
 }
 
 pub type LexProg = Vec<LexLine>;
@@ -69,6 +213,7 @@ impl LexLine {
     }
 }
 
+#[derive(Debug)]
 pub enum Lexeme {
     OpenParen,
     CloseParen,
@@ -76,26 +221,28 @@ pub enum Lexeme {
     Colon,
     Comma,
     Operator(Op),
-    Int(u16),
-    Float(f32),
     Keyword(u8),
-    String(Vec<u8>),
-    StrVar(String),
-    NumVar(String),
-    IntVar(String),
+    Var(Var),
+    Literal(Literal),
     Remark(Vec<u8>),
     Junk(Vec<u8>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Op {
     Add,
     Mult,
     Sub,
-    Div
+    Div,
+    Exp,
+    And,
+    Or,
+    LessThan,
+    Equals,
+    GreaterThan
 }
 
-impl fmt::Debug for Lexeme {
+impl fmt::Display for Lexeme {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match *self {
             Lexeme::OpenParen => String::from("("),
@@ -103,17 +250,10 @@ impl fmt::Debug for Lexeme {
             Lexeme::SemiColon => String::from(";"),
             Lexeme::Colon => String::from(":"),
             Lexeme::Comma => String::from(","),
-            Lexeme::Operator(ref op) => format!("{:?}", op),
-            Lexeme::Int(integer) => format!("{}", integer),
-            Lexeme::Float(float) => format!("{}", float),
+            Lexeme::Operator(ref op) => format!("{}", op),
+            Lexeme::Var(ref variable) => format!("{}", variable),
+            Lexeme::Literal(ref literal) => format!("{}", literal),
             Lexeme::Keyword(byte) => keyword(byte).unwrap(),
-            Lexeme::String(ref bytes) => match from_petscii(bytes) {
-                Ok(string) => format!("\"{}\"", string),
-                Err(_) => format!("String: {:?}", bytes)
-            },
-            Lexeme::StrVar(ref string) => format!("{}$", string),
-            Lexeme::IntVar(ref string) => format!("{}%", string),
-            Lexeme::NumVar(ref string) => string.clone(),
             Lexeme::Remark(ref bytes) => match from_petscii(bytes) {
                 Ok(string) => format!("REM {}", string),
                 Err(_) => format!("Remark: {:?}", bytes)
@@ -123,6 +263,22 @@ impl fmt::Debug for Lexeme {
     }
 }
 
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", String::from(match *self {
+            Op::Add => "+",
+            Op::Mult => "*",
+            Op::Sub => "-",
+            Op::Div => "/",
+            Op::Exp => "^",
+            Op::And => "AND",
+            Op::Or => "OR",
+            Op::LessThan => "<",
+            Op::Equals => "=",
+            Op::GreaterThan => ">"
+        }))
+    }
+}
 pub fn keyword(byte: u8) -> Option<String> {
     Some(String::from(match byte {
         0x80 => "END",
