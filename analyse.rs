@@ -1,93 +1,95 @@
 use defs::*;
-use graph::{FlowGraph};
+use graph::flow_graph::FlowGraph;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
-pub fn recursive_descent<I: InstructionTrait, A: Architecture<I>>(file_buffer: &Vec<u8>, architecture: A, entry_offset: usize) -> Listing<I> {
-    let mut listing = Listing::new(entry_offset);
-
-    let mut unexplored = Vec::new();
-    unexplored.push(entry_offset);
-
-    while let Some(offset) = unexplored.pop() {
-        if let None = listing.instructions.get(&offset) {
-            let inst = match architecture.decode_instruction(file_buffer, offset) {
-                Ok(instruction) => instruction,
-                Err(err) => panic!(err)
-            };
-
-            let (addresses, labels, indeterminate) = architecture.successors(inst, offset);
-
-            for address in addresses {
-                unexplored.push(address);
-            }
-
-            for label in labels {
-                listing.add_label(label);
-            }
-
-            if indeterminate {
-                listing.add_indeterminate(offset);
-            }
-
-            if offset > listing.highest_offset {
-                listing.highest_offset = offset
-            }
-
-            listing.instructions.insert(offset, inst);
-        }
-    }
-
-    listing
-}
-
-pub fn analyse<I: InstructionTrait, A: Architecture<I>>(file_buffer: &Vec<u8>, architecture: A, entry_offset: usize) -> Result<FlowGraph, String> {
-    let mut flow_graph = FlowGraph::new();
-    let mut instructions = HashMap::<usize, I>::new();
-
-    flow_graph.add_node_at(entry_offset);
+pub fn analyse<I: InstructionTrait, A: Architecture<I>>(file_buffer: &Vec<u8>, architecture: A, entry_offset: usize) -> Result<FlowGraph<I>, String> {
+    let mut graph = FlowGraph::new(entry_offset);
 
     let mut unexplored = Vec::new();
+    let mut indeterminates = Vec::new();
     unexplored.push(entry_offset);
 
-    while let Some(offset) = unexplored.pop() {
-        if let None = instructions.get(&offset) {
+    loop {
+        while let Some(offset) = unexplored.pop() {
             let inst = match architecture.decode_instruction(file_buffer, offset) {
                 Ok(instruction) => instruction,
                 Err(err) => return Err(err)
             };
 
-            instructions.insert(offset, inst);
-            let (addresses, _, _) = architecture.successors(inst, offset);
-            let node_index = flow_graph.get_node_index_at(offset)
-                .expect(format!("No node at instruction offset {}", offset).as_str());
+            graph.insert_inst(offset, inst);
 
-            if addresses.len() == 1 {
-                let successor = addresses[0];
-                match flow_graph.get_node_index_at(successor) {
-                    None => {
-                        flow_graph.insert_inst(node_index, successor);
-                        unexplored.push(successor);
-                    },
-                    Some(successor_node_index) => {
-                        flow_graph.add_edge(node_index, successor_node_index);
-                    }
+            let (addresses, labels, indeterminate) =
+                architecture.successors(inst, offset);
+
+            for label in labels {
+                graph.add_label(label);
+            }
+
+            if indeterminate {
+                indeterminates.push(offset);
+            }
+            
+            unexplored.append(&mut graph.insert_addresses(offset, addresses));
+        }
+
+        update_return_statement_targets(&mut graph);
+
+        let mut new_code = false;
+
+        for offset in indeterminates {
+        }
+
+        return Ok(graph);
+    }
+}
+
+fn update_return_statement_targets<I: InstructionTrait>(graph: &mut FlowGraph<I>) {
+    let mut reaching_sets = HashMap::new();
+    reaching_sets.insert(0, HashSet::new());
+    let mut new_edges = Vec::new();
+    let mut live_nodes = vec!(0);
+
+    while let Some(node) = live_nodes.pop() {
+        let final_instruction =
+            graph.get_inst(graph.final_instruction(node).unwrap()).unwrap();
+
+        if final_instruction.is_return() {
+            for source in reaching_sets.get(&node).unwrap() {
+                let source_final_inst =
+                    graph.final_instruction(*source).unwrap();
+                let target_address = source_final_inst +
+                    graph.get_inst(source_final_inst).unwrap().length();
+                let target_node = graph.get_node_at(target_address).unwrap();
+                new_edges.push((node, target_node));
+            }
+        }
+
+        for adjacent_node in graph.get_adjacent_nodes(node) {
+            let node_calls = if final_instruction.is_call() {
+                let mut set = HashSet::new();
+                set.insert(node);
+                set
+            } else {
+                reaching_sets.get(&node).unwrap().clone()
+            };
+
+            if reaching_sets.contains_key(&adjacent_node) {
+                let adjacent_node_calls = reaching_sets.get(&adjacent_node)
+                    .unwrap().clone();
+                if !node_calls.is_subset(&adjacent_node_calls) {
+                    reaching_sets.insert(adjacent_node, node_calls.
+                        union(&adjacent_node_calls).cloned().collect());
+                    live_nodes.push(adjacent_node);
                 }
-            } else if addresses.len() > 1 {
-                for successor in addresses {
-                    match flow_graph.get_node_index_at(successor) {
-                        None => {
-                            let new_node_index = flow_graph.add_node_at(successor);
-                            flow_graph.add_edge(node_index, new_node_index);
-                            flow_graph.insert_inst(new_node_index, successor);
-                            unexplored.push(successor);
-                        },
-                        Some(successor_node_index) =>
-                            flow_graph.add_edge(node_index, successor_node_index)
-                    }
-                }
+            } else {
+                reaching_sets.insert(adjacent_node, node_calls);
+                live_nodes.push(adjacent_node);
             }
         }
     }
 
-    Ok(flow_graph)
+    for (from, to) in new_edges {
+        graph.add_edge(from, to);
+    }
 }

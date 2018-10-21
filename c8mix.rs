@@ -1,8 +1,7 @@
 pub mod analyse;
 pub mod defs;
 pub mod graph;
-pub mod state_flow_graph;
-mod chip8;
+pub mod chip8;
 
 fn main() {
     use std::env;

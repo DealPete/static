@@ -1,7 +1,6 @@
-mod analyse;
-mod defs;
-mod graph;
-mod chip8;
+mod recur;
+pub mod defs;
+pub mod chip8;
 
 fn main() {
     use std::env;
@@ -20,7 +19,7 @@ fn main() {
             Some(offset) => usize::from_str_radix(&offset, 16).unwrap_or(0)
         };
 
-        let listing = analyse::recursive_descent(
+        let listing = recur::recursive_descent(
             &buffer,
             chip8::arch::Chip8 {},
             start_offset

@@ -93,52 +93,22 @@ fn decode_system_call(kk: u8) -> Result<Instruction, String> {
 }
 
 fn decode_8xyn(x: usize, y: usize, n: u8) -> Result<Instruction, String> {
-    match n {
-        0x0 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::LD)
-        }),
-        0x1 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::OR)
-        }),
-        0x2 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::AND)
-        }),
-        0x3 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::XOR)
-        }),
-        0x4 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::ADD)
-        }),
-        0x5 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::SUB)
-        }),
-        0x6 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            .. Instruction::new(Mnemonic::SHR)
-        }),
-        0x7 => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            op2: Some(Operand::V(y)),
-            .. Instruction::new(Mnemonic::SUBN)
-        }),
-        0xE => Ok(Instruction {
-            op1: Some(Operand::V(x)),
-            .. Instruction::new(Mnemonic::SHL)
-        }),
-        _ => Err(String::from("Unknown code"))
-    }
+    Ok(Instruction {
+        op1: Some(Operand::V(x)),
+        op2: Some(Operand::V(y)),
+        .. Instruction::new(match n {
+            0x0 => Mnemonic::LD,
+            0x1 => Mnemonic::OR,
+            0x2 => Mnemonic::AND,
+            0x3 => Mnemonic::XOR,
+            0x4 => Mnemonic::ADD,
+            0x5 => Mnemonic::SUB,
+            0x6 => Mnemonic::SHR,
+            0x7 => Mnemonic::SUBN,
+            0xE => Mnemonic::SHL,
+            _ => return Err(String::from("Unknown code"))
+        })
+    })
 }
 
 fn decode_read_keypress(x: usize, kk: u8) -> Result<Instruction, String> {

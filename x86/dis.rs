@@ -219,10 +219,10 @@ fn decode_imm_inst(buffer: &[u8], offset: usize) -> Instruction {
     let (op, _, length) = decode_mod_rm(buffer, offset + 1, code & 1, 0);
     inst.op1 = op;
     if code == 0x81 {
-        inst.op2 = Some(Operand::Imm16(get_word_le(&buffer, offset + 1 + length as usize) as i16));
+        inst.op2 = Some(Operand::Imm16(get_word_le(&buffer, offset + 1 + length) as i16));
         inst.length = length + 3;
     } else {
-        inst.op2 = Some(Operand::Imm8(buffer[offset + 1 + length as usize] as i8));
+        inst.op2 = Some(Operand::Imm8(buffer[offset + 1 + length] as i8));
         inst.length = length + 2;
     }
     return inst;
@@ -381,12 +381,12 @@ fn decode_mov_imm_reg_mem(buffer: &[u8], offset: usize) -> Instruction {
     match size {
         0 =>
             {
-            inst.op2 = Some(Operand::Imm8(buffer[offset + 1 + mod_rm_length as usize] as i8));
+            inst.op2 = Some(Operand::Imm8(buffer[offset + 1 + mod_rm_length] as i8));
             inst.length = 1 + mod_rm_length + 1;
             },
         _ =>
             {
-            inst.op2 = Some(Operand::Imm16(get_word_le(buffer, offset + 1 + mod_rm_length as usize) as i16));
+            inst.op2 = Some(Operand::Imm16(get_word_le(buffer, offset + 1 + mod_rm_length) as i16));
             inst.length = 1 + mod_rm_length + 2;
             }
     }
@@ -480,7 +480,7 @@ fn decode_f6_f7(buffer: &[u8], offset: usize) -> Result<Instruction, String> {
                 inst.op2 = Some(Operand::Imm8(buffer[offset + 1] as i8));
                 inst.length = 2 + r_length;
             } else {
-                inst.op2 = Some(Operand::Imm16(get_word_le(buffer, offset + 1 + r_length as usize) as i16));
+                inst.op2 = Some(Operand::Imm16(get_word_le(buffer, offset + 1 + r_length) as i16));
                 inst.length = 3 + r_length;
             }
             },

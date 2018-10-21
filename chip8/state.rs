@@ -103,16 +103,6 @@ impl<'a> State<'a> {
             _ => panic!("unimplemented target for set_byte.")
         }
     }
-
-    pub fn weight(&self) -> usize {
-        let mut weight = 0;
-        for reference in COMBINABLE_OPERANDS.iter() {
-            let operand = *reference;
-            weight += self.get_value(operand).len();
-        }
-
-        weight
-    }
 }
 
 impl<'a> StateTrait<State<'a>> for State<'a> {
@@ -240,10 +230,6 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
             }
         }
 
-        //println!("{}\n{}\n", self.debug_string(), state.debug_string());
-        //println!("subset: {}\t superset: {}\t subdiff: {:?}\t superdiff: {:?}",
-        //    subset, superset, subdiff, superdiff);
-
         if subset {
             match subdiff {
                 None => CombineResult::Subset,
@@ -308,7 +294,7 @@ impl<'a> StateTrait<State<'a>> for State<'a> {
         let line5 = {
             let mut line = String::new();
             for (address, value) in self.memory.get_deltas() {
-                line.push_str(format!("[{:x}] = {}\t", address, value).as_str());
+                line.push_str(format!("[{:x}] = {:?}\t", address, value).as_str());
             }
             line
         };

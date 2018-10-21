@@ -141,6 +141,14 @@ impl InstructionTrait for Instruction {
     fn is_return(&self) -> bool {
         self.mnemonic == Mnemonic::RET
     }
+
+    fn is_call(&self) -> bool {
+        self.mnemonic == Mnemonic::CALL
+    }
+
+    fn length(&self) -> usize {
+        2
+    }
 }
 
 impl fmt::Display for Instruction {

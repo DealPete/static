@@ -37,6 +37,8 @@ pub trait StateTrait<S: StateTrait<S>> : Clone + fmt::Display {
 }
 
 pub trait InstructionTrait : Copy + Clone + fmt::Display {
+    fn length(&self) -> usize;
+    fn is_call(&self) -> bool;
     fn is_return(&self) -> bool;
     fn is_rel_branch(&self) -> bool;
 }
@@ -53,11 +55,23 @@ impl<I: InstructionTrait> Listing<I> {
     pub fn new(entry_offset: usize) -> Listing<I> {
         Listing {
             entry_offset: entry_offset,
-            highest_offset:entry_offset,
+            highest_offset: entry_offset,
             instructions: HashMap::<usize, I>::new(),
             labels: HashSet::new(),
             indeterminates: HashSet::new()
         }
+    }
+
+    pub fn add(&mut self, offset: usize, instruction: I) {
+        if offset > self.highest_offset {
+            self.highest_offset = offset;
+        }
+
+        self.instructions.insert(offset, instruction);
+    }
+
+    pub fn get(&self, offset: usize) -> Option<&I> {
+        self.instructions.get(&offset)
     }
 
     pub fn add_label(&mut self, offset: usize) {
@@ -250,6 +264,15 @@ impl Value {
         match self {
             &Value::Word(ref word) => word.len(),
             &Value::Byte(ref byte) => byte.len()
+        }
+    }
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Value::Byte(ref byte) => write!(f, "{:?}", byte),
+            &Value::Word(ref word) => write!(f, "{:?}", word)
         }
     }
 }

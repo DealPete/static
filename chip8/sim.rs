@@ -26,10 +26,8 @@ impl<'a> SimulatorTrait<State<'a>, Instruction> for Interpreter {
             | Mnemonic::SKP | Mnemonic::SKNP | Mnemonic::RET =>
                 SimResult::Branch(self.branch(state, instruction)),
             Mnemonic::LD => simulate_ld(state, instruction),
-            Mnemonic::SHL | Mnemonic::SHR =>
-                SimResult::State(simulate_unary_operator(state, instruction)),
             Mnemonic::ADD | Mnemonic::SUB | Mnemonic::OR | Mnemonic::AND
-            | Mnemonic::XOR | Mnemonic::SUBN =>
+            | Mnemonic::XOR | Mnemonic::SUBN | Mnemonic::SHL | Mnemonic::SHR =>
                 SimResult::State(simulate_binary_operator(state, instruction)),
             Mnemonic::RND => simulate_rnd(state, instruction),
             Mnemonic::DRW => SimResult::State(state.
@@ -60,15 +58,38 @@ impl<'a> Interpreter {
             Mnemonic::RET => {
                 state.sp -= 1;
                 state.pc = state.stack[state.sp];
+                state.stack[state.sp] = 0;
                 new_states.push(state);
             },
             Mnemonic::JP => {
-                state.pc = match instruction.unpack_op1() {
-                    Operand::Address(word) => word,
-                    _ => panic!("CALL operand should be immediate address.")
-                };
-                new_labels.push(Interpreter::next_inst_offset(&state));
-                new_states.push(state);
+                match instruction.unpack_op1() {
+                    Operand::Address(word) => {
+                        state.pc = word;
+                        new_labels.push(Interpreter::next_inst_offset(&state));
+                        new_states.push(state);
+                    },
+                    Operand::V(0) => match instruction.unpack_op2() {
+                        Operand::Address(base) => {
+                            match state.V[0] {
+                                Byte::Undefined => panic!(
+                                    "Can't jump to undefined offset"),
+                                Byte::AnyValue => panic!(
+                                    "Can't jump to every address"),
+                                Byte::Int(ref set) => {
+                                    for offset in set {
+                                        let mut new_state = state.clone();
+                                        new_state.pc = base + *offset as u16;
+                                        new_labels.push(Interpreter::
+                                            next_inst_offset(&new_state));
+                                        new_states.push(new_state);
+                                    }
+                                }
+                            }
+                        },
+                        _ => panic!("base of indirect jump should be imm16")
+                    },
+                    _ => panic!("Invalid JP operand.")
+                }
             },
             Mnemonic::SKP | Mnemonic::SKNP => {
                 let mut new_state = state.clone();
@@ -115,12 +136,6 @@ impl<'a> Interpreter {
     }
 }
 
-fn simulate_unary_operator<'a>(state: State<'a>, inst: Instruction) -> State<'a> {
-    let op1 = inst.unpack_op1();
-    let (result, vf) = apply_unary_op(state.get_byte(op1), inst.mnemonic);
-    state.set_byte(op1, result).set_byte(Operand::V(0xF), vf)
-}
-
 fn simulate_binary_operator<'a>(state: State<'a>, inst: Instruction) -> State<'a> {
     let (op1, op2) = (inst.unpack_op1(), inst.unpack_op2());
     let (result, vf) = apply_binary_op(state.get_value(op1), state.get_value(op2),
@@ -164,7 +179,7 @@ fn simulate_ldbcd<'a>(mut state: State<'a>, _inst: Instruction) -> SimResult<Sta
         Word::Int(ref set) => {
             for address in set.iter() {
                 state.memory.write_string(*address as usize,
-                    &vec!(Byte::Undefined, Byte::Undefined, Byte::Undefined));
+                    &vec!(Byte::AnyValue, Byte::AnyValue, Byte::AnyValue));
             }
         },
         Word::Bytes(_, _) => panic!("Index register shouldn't be split.")
@@ -192,7 +207,7 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
                         Word::Bytes(_, _) => panic!("Index register shouldn't be split.")
                     }
                 },
-                _ => panic!("Only registers can be loaded by I pointer.")
+                _ => panic!("Only registers can be written to memory.")
             }
         },
         Operand::V(x) => {
@@ -200,14 +215,16 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
                 Word::Undefined => panic!("Can't read from undefined memory location."),
                 Word::AnyValue => panic!("Can't read from every memory location."),
                 Word::Int(ref set) => {
-                    for address in set.iter() {
-                        for i in 0..(x+1) {
+                    for i in 0..(x+1) {
+                        let mut values = Byte::from_vec(Vec::new());
+                        for address in set.iter() {
                             let memory_byte = state.memory.get_byte(*address as usize  + i);
                             match memory_byte {
-                                Some(byte) => state.V[i] = byte,
+                                Some(byte) => values = values.union(byte),
                                 None => return SimResult::Error(state.clone(), String::from(format!("Tried to read from uninitialized memory location {:x}", *address)))
                             }
                         }
+                        state.V[i] = values;
                     }
                 },
                 Word::Bytes(_, _) => panic!("Index register shouldn't be split.")
@@ -217,23 +234,6 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
     }
 
     SimResult::State(state)
-}
-
-fn apply_unary_op(op: Byte, mnemonic: Mnemonic) -> (Byte, Byte) {
-    match op {
-        Byte::Undefined => (Byte::Undefined, Byte::Undefined),
-        Byte::AnyValue => (Byte::AnyValue, Byte::AnyValue),
-        Byte::Int(byte_set) => {
-            let mut set = HashSet::new();
-            let mut new_vf = Byte::Int(HashSet::new());
-            for byte in byte_set {
-                let (result, vf) = apply_to_u8(byte, mnemonic);
-                set.insert(result);
-                new_vf = new_vf.union(vf);
-            }
-            (Byte::Int(set), new_vf)
-        }
-    }
 }
 
 fn apply_binary_op(op1: Value, op2: Value, op: Mnemonic) -> (Value, Option<Byte>) {
@@ -322,20 +322,6 @@ fn apply_to_bytes(op1: Byte, op2: Byte, op: Mnemonic) -> (Byte, Option<Byte>) {
     }
 }
 
-fn apply_to_u8(byte: u8, op: Mnemonic) -> (u8, Byte) {
-    match op {
-        Mnemonic::SHL => (byte << 1, match byte & 0x80 {
-            0x80 => Byte::new(1),
-            _ => Byte::new(0)
-        }),
-        Mnemonic::SHR => (byte >> 1, match byte & 0x01 {
-            0x01 => Byte::new(1),
-            _ => Byte::new(0)
-        }),
-        _ => panic!("unknown unary op")
-    }
-}
-
 fn apply_to_u16s(word1: u16, word2: u16, op: Mnemonic) -> (u16, Bit) {
     match op {
         Mnemonic::ADD => (word1.wrapping_add(word2), Bit::Undefined),
@@ -362,6 +348,16 @@ fn apply_to_u8s(byte1: u8, byte2: u8, op: Mnemonic) -> (u8, Bit) {
                 Bit::False
             } else {
                 Bit::True
+            }),
+        Mnemonic::SHL =>
+            (byte2 << 1, match byte2 & 0x80 {
+                0x80 => Bit::True,
+                _ => Bit::False
+            }),
+        Mnemonic::SHR =>
+            (byte2 >> 1, match byte2 & 0x01 {
+                0x01 => Bit::True,
+                _ => Bit::False
             }),
         Mnemonic::OR => (byte1 | byte2, Bit::Undefined),
         Mnemonic::AND => (byte1 & byte2, Bit::Undefined),

@@ -22,12 +22,12 @@ impl<'a> Architecture<Instruction> for X86 {
             | Mnemonic::JLE | Mnemonic::JNLE | Mnemonic::CALL =>
                 match instruction.unpack_op1() {
                     Operand::Imm8(byte) => {
-                        let base = offset + instruction.length as usize;
+                        let base = offset + instruction.length;
                         let target = add_rel8(base, byte);
                         (vec!(base, target), vec!(target), false)
                     },
                     Operand::Imm16(word) => {
-                        let base = offset + instruction.length as usize;
+                        let base = offset + instruction.length;
                         let target = add_rel16(base, word);
                         (vec!(base, target), vec!(target), false)
                     },
@@ -36,12 +36,12 @@ impl<'a> Architecture<Instruction> for X86 {
             Mnemonic::JMP =>
                 match instruction.unpack_op1() {
                     Operand::Imm8(byte) => {
-                        let base = offset + instruction.length as usize;
+                        let base = offset + instruction.length;
                         let target = add_rel8(base, byte);
                         (vec!(target), vec!(target), false)
                     },
                     Operand::Imm16(word) => {
-                        let base = offset + instruction.length as usize;
+                        let base = offset + instruction.length;
                         let target = add_rel16(base, word);
                         (vec!(target), vec!(target), false)
                     },
@@ -56,9 +56,9 @@ impl<'a> Architecture<Instruction> for X86 {
                     (Vec::new(), Vec::new(), true),
                 Operand::Imm8(0x27) =>
                     (Vec::new(), Vec::new(), false),
-                _ => (vec!(offset + instruction.length as usize), Vec::new(), false)
+                _ => (vec!(offset + instruction.length), Vec::new(), false)
             },
-            _ => (vec!(offset + instruction.length as usize), Vec::new(), false)
+            _ => (vec!(offset + instruction.length), Vec::new(), false)
         }
     }
 }
@@ -84,7 +84,7 @@ impl Listing<Instruction> {
                     ""
                 };
                 let inst_output = if instruction.is_rel_branch() {
-                    let mut target = i + instruction.length as usize;
+                    let mut target = i + instruction.length;
                     match instruction.op1 {
                         Some(Operand::Imm8(rel)) => target = add_rel8(target, rel),
                         Some(Operand::Imm16(rel)) => target = add_rel16(target, rel),
@@ -110,7 +110,7 @@ impl Listing<Instruction> {
 pub struct Instruction {
     pub rep_prefix: Option<Mnemonic>,
     pub mnemonic: Mnemonic,
-    pub length: u8,
+    pub length: usize,
     pub op1: Option<Operand>,
     pub op2: Option<Operand>
 }
@@ -138,6 +138,14 @@ impl Instruction {
 }
 
 impl InstructionTrait for Instruction {
+    fn length(&self) -> usize {
+        self.length
+    }
+
+    fn is_call(&self) -> bool {
+        self.mnemonic == Mnemonic::CALL
+    }
+
     fn is_return(&self) -> bool {
         self.mnemonic == Mnemonic::RET
     }
