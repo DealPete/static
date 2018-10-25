@@ -1,0 +1,786 @@
+ 200:   CALL 22c   // draw-title
+        HIGH
+        CLS
+        CALL 77b   // randomize-loot
+        LD V0, 2
+        LD V1, 0
+        LD I, 400
+        LDPTR [I], V1
+        LD VD, 3c
+        LD VC, 10
+        LD VB, 0
+        LD VA, 0
+        LD V9, 0
+        LD V8, 0
+        LD V7, 4
+        LD V5, 0
+        LD V4, 0
+        CALL 4c3
+        CALL 405
+        CALL 2fe
+        CALL 27e
+        JP 200
+
+ draw-title:
+	 22c:   LOW
+			CLS
+			LD V0, 0
+			LD V1, 0
+			LD V2, 20
+			LD I, de7
+	 238:   DRW V0, V1, 0
+			ADD V0, 10
+			ADD I, V2
+			SNE V0, 40
+				ADD V1, 10
+			SNE V0, 40
+				LD V0, 0
+			SE V1, 20
+				JP 238
+			LD V0, 30
+			LD V1, 16
+			LD V2, 6
+			LD I, a10
+	 252:   DRW V0, V1, 1
+			SKP V2
+				JP 252
+	 258:   SKNP V2
+				JP 258
+			RET
+
+ 25e:   LOW
+        CLS
+        LD V0, 10
+        LD V1, 4
+        DRW V0, V1, 0
+        LD V0, 20
+        ADD I, V0
+        DRW V0, V1, 0
+        LD V1, 16
+        LD V2, f9
+        LD I, 400
+        CALL 451
+        LD I, 401
+        CALL 451
+        LD V0, Key-Press
+        JP 258
+ 27e:   CALL 377
+ 280:   SNE V9, 1
+            CALL 397
+        CALL 2fe
+        CALL 405
+        CALL 32d
+        CALL 527
+        CALL 48b
+        SE V8, 0
+            RET
+        CALL 2fe
+        SE VF, 0
+            CALL 5ed
+        SNE V9, 1
+            CALL 3a1
+        SNE V9, 1
+            CALL 397
+        CALL 405
+        CALL 312
+        JP 280
+ 2a8:   LD I, c87
+        ADD I, VB
+        LD V0, 20
+        LD V1, 0
+ 2b0:   DRW VD, VC, 0
+        CALL 312
+        DRW VD, VC, 0
+        ADD I, V0
+        ADD V1, 1
+        SNE V1, 3
+            LD Sound-Timer, V1
+        SE V1, 4
+            JP 2b0
+        RET
+ 2c4:   LD I, b87
+        DRW VD, VC, 0
+        CALL 312
+        DRW VD, VC, 0
+        LD I, d87
+        DRW VD, VC, 0
+        CALL 312
+        DRW VD, VC, 0
+        LD I, da7
+        DRW VD, VC, 0
+        CALL 312
+        LD V0, Key-Press
+        LD V8, 1
+        LD I, ee7
+        JP 25e
+ 2e2:   SE VB, 80
+            JP 2ea
+        ADD VD, 2
+        JP 2ee
+ 2ea:   LD VB, 80
+        LD VA, e0
+ 2ee:   RET
+ 2f0:   SE VB, 0
+            JP 2f8
+        ADD VD, fe
+        JP 2fc
+ 2f8:   LD VB, 0
+        LD VA, e0
+ 2fc:   RET
+ 2fe:   LD I, b87
+        ADD I, VB
+        ADD I, VA
+        DRW VD, VC, 0
+        RET
+ 308:   ADD VA, 20
+        LD V0, 7f
+        AND VA, V0
+        CALL 46b
+        RET
+ 312:   LD VF, Delay-Timer
+        SE VF, 0
+            JP 312
+        LD VF, 5
+        LD Delay-Timer, VF
+        RET
+ 31e:   LD VF, Delay-Timer
+        SE VF, 0
+            JP 31e
+        LD VF, 1
+        LD Delay-Timer, VF
+        RET
+ 32d:   LD V0, VD
+        LD V1, VC
+        LD V2, VB
+        LD I, 32a
+        LDPTR [I], V2
+        RET
+ 339:   LD I, 32a
+        LDPTR V2, [I]
+        LD VD, V0
+        LD VC, V1
+        LD VB, V2
+        RET
+ 345:   SHL V0
+        SHL V0
+        SHL V0
+        SHL V0
+        ADD I, V0
+        RET
+ 351:   SNE VF, 0
+            RET
+        CALL 2fe
+        RND VD, 7f
+        RND VC, 3f
+        ADD VD, 2
+        LD VE, 6e
+        SUB VE, VD
+        SE VF, 1
+            ADD VD, c1
+        ADD VC, 1
+        LD VE, 2f
+        SUB VE, VC
+        SE VF, 1
+            ADD VC, e0
+        CALL 2fe
+        JP 351
+ 377:   LD V9, 0
+        SNE V7, 1
+            JP 389
+        SNE V7, 3
+            JP 389
+        SNE V4, 0
+            RET
+        SE V7, 4
+            RET
+ 389:   LD V9, 1
+        RND V0, 3f
+        ADD V0, 20
+        LD V1, 0
+        LD I, 375
+        LDPTR [I], V1
+        RET
+ 397:   LD I, 375
+        LDPTR V1, [I]
+        LD I, dc7
+        DRW V0, V1, 0
+        RET
+ 3a1:   LD I, 375
+        LDPTR V1, [I]
+        RND VF, 3
+        SNE VF, 0
+            ADD V0, fd
+        SNE VF, 1
+            ADD V0, 3
+        LD VF, 7f
+        AND V0, VF
+        ADD V1, 1
+        LD VF, 3f
+        AND V1, VF
+        LD I, 375
+        LDPTR [I], V1
+        ADD VD, 80
+        ADD VC, 40
+        ADD V0, 80
+        ADD V1, 40
+        ADD V0, f0
+        LD VE, V0
+        SUBN VE, VD
+        SE VF, 1
+            JP 3f9
+        ADD V0, 20
+        LD VE, V0
+        SUB VE, VD
+        SE VF, 1
+            JP 3f9
+        ADD V1, f0
+        LD VE, V1
+        SUBN VE, VC
+        SE VF, 1
+            JP 3f9
+        ADD V1, 20
+        LD VE, V1
+        SUB VE, VC
+        SE VF, 1
+            JP 3f9
+        CALL 46b
+        CALL 46b
+        CALL 46b
+        CALL 46b
+        LD VF, 5
+        LD Sound-Timer, VF
+ 3f9:   ADD VD, 80
+        ADD VC, c0
+        RET
+ 405:   LD I, 9a3
+        LD V1, 2
+        LD V2, f9
+        DRW V1, V2, 5
+        ADD V1, 6
+        LD I, 400
+        CALL 451
+        LD I, 401
+        CALL 451
+        LD V1, f6
+        LD I, 9d0
+        ADD I, V5
+        SE V4, 0
+            LD I, Large-Numeral-V4
+        DRW V1, V1, 8
+        LD VE, 4
+        SUB VE, V7
+        SE VF, 1
+            RET
+        CALL 821
+        LD V1, ed
+        LD V2, f6
+        LD I, a11
+        SNE V0, 5
+            LD I, 9b0
+        SNE V0, 4
+            LD I, 9a8
+        SNE V0, 2
+            LD I, 9c0
+        SNE V0, 1
+            LD I, 9b8
+        DRW V1, V2, 8
+        RET
+ 451:   LDPTR V0, [I]
+        LD I, 402
+        LDBCD V0
+        LD I, 403
+        CALL 461
+        LD I, 404
+        CALL 461
+        RET
+ 461:   LDPTR V0, [I]
+        LD I, Numeral-V0
+        DRW V1, V2, 5
+        ADD V1, 5
+        RET
+ 46b:   LD I, 400
+        LDPTR V1, [I]
+        LD VF, 1
+        SUB V1, VF
+        SNE VF, 1
+            JP 485
+        ADD V0, ff
+        SE V0, ff
+            JP 483
+        CALL 2c4
+        RET
+ 483:   LD V1, 63
+ 485:   LD I, 400
+        LDPTR [I], V1
+        RET
+ 48b:   SNE V4, 0
+            RET
+        LD I, 3ff
+        LDPTR V0, [I]
+        SE V0, 0
+            JP 4af
+        SE V4, 1
+            JP 4ab
+        LD V4, 0
+        CALL 821
+        SE V0, 5
+            RET
+        LD V8, 1
+        LD I, f27
+        JP 25e
+ 4ab:   ADD V4, ff
+        LD V0, 14
+ 4af:   ADD V0, ff
+        LD I, 3ff
+        LDPTR [I], V0
+        RET
+ 4b7:   LD I, 400
+        LDPTR V0, [I]
+        ADD V0, VF
+        LD I, 400
+        LDPTR [I], V0
+        RET
+ 4c3:   LD V2, 0
+ 4c5:   CALL 989
+        SHR V0
+        ADD I, V0
+        LDPTR V1, [I]
+        LD I, a11
+        CALL 345
+        DRW V2, V1, f
+        ADD V2, 4
+        SE V2, 80
+            JP 4c5
+        RET
+ 4db:   ADD V7, 1
+        SNE V7, 5
+            LD V7, 0
+        LD V2, 7c
+        LD V3, 0
+ 4e5:   CALL 989
+        ADD I, V3
+        LDPTR V1, [I]
+        LD I, a11
+        CALL 345
+        SCL
+        DRW V2, V1, f
+        CALL 31e
+        ADD V3, 2
+        SE V3, 40
+            JP 4e5
+        LD VD, 1
+        CALL 377
+        RET
+ 501:   ADD V7, ff
+        SNE V7, ff
+            LD V7, 4
+        LD V2, 0
+        LD V3, 3e
+ 50b:   CALL 989
+        ADD I, V3
+        LDPTR V1, [I]
+        LD I, a11
+        CALL 345
+        SCR
+        DRW V2, V1, f
+        CALL 31e
+        ADD V3, fe
+        SE V3, fe
+            JP 50b
+        LD VD, 6f
+        CALL 377
+        RET
+ 527:   LD V0, 6
+        SKP V0
+            JP 567
+        CALL 2a8
+        CALL 821
+        SE V0, 2
+            JP 539
+        CALL 5b3
+        RET
+ 539:   SE V0, 1
+            JP 54f
+        LD VF, 1
+        CALL 4b7
+        LD V0, 0
+        SHR V1
+        SHR V1
+        SHR V1
+        SHR V1
+        CALL 839
+        RET
+ 54f:   SE V0, 4
+            JP 565
+        SNE V5, 38
+            LD V4, 8
+        LD V0, 0
+        SHR V1
+        SHR V1
+        SHR V1
+        SHR V1
+        CALL 839
+        CALL 7a7
+ 565:   RET
+ 567:   LD V1, 0
+        SNE VC, 1
+            JP 577
+        LD V0, 5
+        SKP V0
+            JP 577
+        LD V1, 1
+        ADD VC, ff
+ 577:   SNE VC, 2f
+            JP 585
+        LD V0, 8
+        SKP V0
+            JP 585
+        LD V1, 1
+        ADD VC, 1
+ 585:   LD V0, 7
+        SKP V0
+            JP 597
+        LD V1, 1
+        CALL 2f0
+        LD VE, 2
+        SUBN VE, VD
+        SE VF, 1
+            CALL 501
+ 597:   LD V0, 9
+        SKP V0
+            JP 5a9
+        LD V1, 1
+        CALL 2e2
+        LD VE, 6e
+        SUB VE, VD
+        SE VF, 1
+            CALL 4db
+ 5a9:   SNE V1, 0
+            LD VA, 0
+        SE V1, 0
+            CALL 308
+        RET
+ 5b3:   CALL 5bb
+        CALL 312
+        CALL 5bb
+        RET
+ 5bb:   LD V2, 0
+ 5bd:   CALL 989
+        ADD I, V2
+        LDPTR V1, [I]
+        SE V0, 1
+            JP 5e5
+        LD V3, V1
+        ADD V3, 4
+        SHR V1
+        SHR V1
+        SHR V1
+        CALL 829
+        SNE V0, 0
+            JP 5e5
+        ADD V1, 4
+        LD I, 9c8
+        SHL V2
+        ADD V2, 3
+        DRW V2, V3, 8
+        ADD V2, fd
+        SHR V2
+ 5e5:   ADD V2, 8
+        SE V2, 40
+            JP 5bd
+        RET
+ 5ed:   ADD VC, 40
+        CALL 989
+        LD V3, 0
+ 5f3:   LDPTR V1, [I]
+        SNE V0, 0
+            JP 645
+        ADD V1, 40
+        ADD V1, f
+        LD VE, V1
+        SUB VE, VC
+        SE VF, 1
+            JP 645
+        ADD V1, e2
+        LD VE, V1
+        SUBN VE, VC
+        SE VF, 1
+            JP 645
+        LD V2, V3
+        ADD V2, 4
+        LD VE, V2
+        SUB VE, VD
+        SE VF, 1
+            JP 645
+        ADD V2, f0
+        LD VE, V2
+        SUBN VE, VD
+        SE VF, 1
+            JP 645
+        ADD V0, ff
+        SHR V0
+        SHR V0
+        SE V0, 0
+            JP 63b
+        SHR V3
+        SHR V3
+        SHR V3
+        SHR V6
+        CALL 727
+        JP 643
+ 63b:   CALL 2fe
+        CALL 339
+        CALL 2fe
+        CALL 351
+ 643:   RET
+ 645:   ADD V3, 4
+        SE V3, 80
+            JP 5f3
+        RET
+ 64d:   LD V0, c
+        LD V1, 20
+        SE V9, 1
+            JP 65b
+        LD I, ae7
+        DRW V0, V1, 0
+        RET
+ 65b:   LD I, a11
+        SNE V9, 8
+            LD I, 9d8
+        SNE V9, 10
+            LD I, 9e0
+        SNE V9, 20
+            LD I, 9f0
+        DRW V0, V1, 8
+        RET
+ 66d:   LD V0, 0
+        SNE V9, 0
+            RET
+        LD VE, 24
+        SUBN VE, VD
+        SE VF, 1
+            LD V0, 1
+        RET
+ 67d:   LD V0, c
+        LD V1, 20
+        LD V2, 0
+        LD I, ae7
+ 685:   DRW V0, V1, 0
+        LD VF, 20
+        ADD I, VF
+        DRW V0, V1, 0
+        CALL 312
+        ADD V2, 1
+        SE V2, 4
+            JP 685
+        LD VF, 3
+        CALL 4b7
+        RET
+ 69b:   SE V9, 1
+            JP 6a3
+        CALL 67d
+        JP 6a7
+ 6a3:   CALL 64d
+        OR V5, V9
+ 6a7:   LD V9, 0
+        LD V0, 0
+        LD V1, V6
+        ADD V7, fb
+        CALL 839
+        ADD V7, 5
+        RET
+ 6b5:   LD I, aa7
+        LD V1, 0
+        LD V0, f8
+ 6bb:   DRW V0, V1, 0
+        ADD V1, 10
+        SE V1, 40
+            JP 6bb
+        LD I, aa1
+        LD V0, 8
+        LD V1, 30
+ 6c9:   DRW V0, V1, 0
+        ADD V0, 10
+        SE V0, 78
+            JP 6c9
+        LD V1, 21
+        LD I, ac9
+        LD V0, 8
+        DRW V0, V1, f
+        LD I, ad8
+        LD V0, f0
+        DRW V0, V1, f
+        CALL 64d
+        RET
+ 6e3:   LD V1, 0
+        LD V0, 7
+        SKP V0
+            JP 6f1
+        LD V1, 1
+        SE VD, 18
+            CALL 2f0
+ 6f1:   LD V0, 9
+        SKP V0
+            JP 6fd
+        LD V1, 1
+        SE VD, 64
+            CALL 2e2
+ 6fd:   SNE V1, 0
+            LD VA, 0
+        SE V1, 0
+            CALL 308
+        RET
+ 707:   CALL 2fe
+        CALL 2a8
+        CALL 2fe
+ 70d:   CALL 2fe
+        ADD VC, fe
+        CALL 2fe
+        CALL 312
+        SE VC, 0
+            JP 70d
+        CLS
+        CALL 339
+        ADD V7, fb
+        CALL 4c3
+        CALL 2fe
+        CALL 351
+        RET
+ 727:   LD V1, V6
+        CALL 829
+        LD V9, V0
+        ADD V7, 5
+        CLS
+        CALL 6b5
+        LD VD, 3c
+        LD VC, 0
+        LD VB, 0
+        LD VA, 0
+        LD I, b87
+        CALL 2fe
+ 73f:   CALL 2fe
+        ADD VC, 2
+        CALL 2fe
+        CALL 312
+        SE VC, 20
+            JP 73f
+        CALL 405
+ 74d:   CALL 2fe
+        CALL 405
+        CALL 6e3
+        CALL 48b
+        CALL 2fe
+        LD V0, 6
+        SKP V0
+            JP 771
+        CALL 66d
+        SE V0, 1
+            JP 76d
+        CALL 2fe
+        CALL 2a8
+        CALL 2fe
+        CALL 69b
+        JP 771
+ 76d:   CALL 707
+        RET
+ 771:   CALL 405
+        CALL 312
+        SNE V8, 0
+            JP 74d
+        RET
+
+ randomize-loot:
+	 77b:   LD V1, 0   # room-0 offset
+			LD V2, 0   # loot-data offset
+
+			loop:
+		 77f:   CALL 7ed  // is-pit
+				RND V3, 3
+				SNE V0, 1
+					RND V3, 1
+				LD V0, V3
+				LD I, 7f9
+				ADD I, V2
+				LDPTR [I], V0
+				ADD V1, 8
+				ADD V2, 1
+				SE V2, 20
+					JP 77f
+
+			CALL 7a7  // try-place-call
+			LD V4, 8
+			CALL 7c7  // try-place-part
+			LD V4, 10
+			CALL 7c7  // try-place-part
+			LD V4, 20
+			CALL 7c7  // try-place-part
+			RET
+
+ 7a7:   RND V3, 1f
+        CALL 7e7
+        SNE V0, 1
+            JP 7a7
+        LD I, 7f9
+        ADD I, V3
+        LDPTR V0, [I]
+        LD VE, 3
+        SUB VE, V0
+        SE VF, 1
+            JP 7a7
+        LD I, 7f9
+        ADD I, V3
+        LD V0, 4
+        LDPTR [I], V0
+        RET
+ 7c7:   RND V3, 1f
+        CALL 7e7
+        SE V0, 1
+            JP 7c7
+        LD I, 7f9
+        ADD I, V3
+        LDPTR V0, [I]
+        LD VE, 3
+        SUB VE, V0
+        SE VF, 1
+            JP 7c7
+        LD I, 7f9
+        ADD I, V3
+        LD V0, V4
+        LDPTR [I], V0
+        RET
+
+is-v3-pit:
+	 7e7:   SHL V1
+			SHL V1
+			SHL V1
+	 7ed:   LD I, 849
+			ADD I, V1
+			LDPTR V0, [I]
+			SE V0, 1
+				LD V0, 0
+			RET
+
+ 821:   SHR V1
+        SHR V1
+        SHR V1
+        SHR V1
+ 829:   SHL V0
+        SHL V0
+        SHL V0
+        LD I, 7f9
+        ADD I, V0
+        ADD I, V1
+        LDPTR V0, [I]
+        RET
+ 839:   LD I, 7f9
+        ADD I, V1
+        SHL V1
+        SHL V1
+        SHL V1
+        ADD I, V1
+        LDPTR [I], V0
+        RET
+ 989:   SHL V0
+        SHL V0
+        * JP V0, 98f
+

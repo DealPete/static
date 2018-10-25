@@ -10,59 +10,6 @@ impl<'a> Architecture<Instruction> for Chip8 {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<Instruction, String> {
         dis::decode_instruction(buffer, offset)
     }
-
-    fn successors(&self, instruction: Instruction, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
-        match instruction.mnemonic {
-            Mnemonic::CALL => match instruction.unpack_op1() {
-                Operand::Address(address) =>
-                    (vec!(address as usize - 0x200, offset + 2), vec!(address as usize - 0x200), false),
-                _ => panic!("CALL instruction should have address as operand.")
-            },
-            Mnemonic::JP => match instruction.unpack_op1() {
-                Operand::Address(address) =>
-                    (vec!(address as usize - 0x200), vec!(address as usize - 0x200),
-                    false),
-                _ => (Vec::new(), Vec::new(), true)
-            },
-            Mnemonic::RET => (Vec::new(), Vec::new(), false),
-            Mnemonic::SE | Mnemonic::SNE | Mnemonic::SKP | Mnemonic::SKNP =>
-                (vec!(offset + 2, offset + 4), Vec::new(), false),
-            _ => (vec!(offset + 2), Vec::new(), false)
-        }
-    }
-
-/*
-    fn true_successors(&self, analysis: &Analysis<State<'a>, Instruction>, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
-        let instruction = analysis.instructions.get(&offset).expect("No instruction at offset!");
-        let (mut addresses, mut labels, incomplete) = self.naive_successors(instruction.clone(), offset);
-        
-        if incomplete {
-            match search::find_value(Operand::V(0), analysis, offset) {
-                Value::Byte(byte) => {
-                    match byte {
-                        Byte::Undefined => panic!("Can't jump to undefined address!"),
-                        Byte::AnyValue => panic!("Can't jump to every address!"),
-                        Byte::Int(set) => {
-                            let operand = instruction.unpack_op2();
-                            if let Operand::Address(jump_offset) = operand {
-                                for value in set {
-                                    let destination = (value as u16 + jump_offset - 0x200) as usize;
-                                    addresses.push(destination);
-                                    labels.push(destination);
-                                }
-                            } else {
-                                panic!("indirect jump should have address as second operand");
-                            }
-                        }
-                    }
-                },
-                _ => panic!("V0 should have byte value")
-            }
-        }
-
-        (addresses, labels, incomplete)
-    }
-*/
 }
 
 impl Listing<Instruction> {
@@ -148,6 +95,28 @@ impl InstructionTrait for Instruction {
 
     fn length(&self) -> usize {
         2
+    }
+
+    fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+        match self.mnemonic {
+            Mnemonic::CALL => match self.unpack_op1() {
+                Operand::Address(address) =>
+                    (vec!(offset + 2, address as usize - 0x200),
+                        vec!(address as usize - 0x200), false),
+                _ => panic!("CALL instruction should have address as operand.")
+            },
+            Mnemonic::JP => match self.unpack_op1() {
+                Operand::Address(address) =>
+                    (vec!(address as usize - 0x200), vec!(address as usize - 0x200),
+                    false),
+                _ => (Vec::new(), Vec::new(), true)
+            },
+            Mnemonic::RET => (Vec::new(), Vec::new(), false),
+            Mnemonic::SE | Mnemonic::SNE | Mnemonic::SKP | Mnemonic::SKNP =>
+                (vec!(offset + 2, offset + 4), Vec::new(), false),
+            Mnemonic::EXIT => (Vec::new(), Vec::new(), false),
+            _ => (vec!(offset + 2), Vec::new(), false)
+        }
     }
 }
 

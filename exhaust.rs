@@ -7,7 +7,12 @@ pub enum LogType {
     Verbose
 }
 
-pub fn simulate_exhaustively<Z: SimulatorTrait<S, I>, S: StateTrait<S>, I: InstructionTrait, A: Architecture<I>>(file_buffer: &Vec<u8>, simulator: Z, initial_state: S, architecture: A, log_type: Option<LogType>) -> Result<(StateFlowGraph<S>, Listing<I>), String> {
+pub fn simulate_exhaustively<S, I, A, Z>(file_buffer: &Vec<u8>, simulator: Z, initial_state: S, architecture: A, log_type: Option<LogType>) -> Result<(StateFlowGraph<S>, Listing<I>), String>
+    where S: StateTrait<S>,
+          I: InstructionTrait,
+          A: Architecture<I>,
+          Z: SimulatorTrait<S, I>
+{
     let entry_offset = Z::next_inst_offset(&initial_state);
     let mut listing = Listing::new(entry_offset);
     let mut graph = StateFlowGraph::new(entry_offset, initial_state);

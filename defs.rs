@@ -5,22 +5,6 @@ use std::ops::Add;
 
 pub trait Architecture<I: InstructionTrait> : Copy + Clone {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<I, String>;
-
-    // successors(instruction, offset) -> (addresses, labels, indeterminate)
-    // successors computes the instruction's successors from
-    // its optype and operands.
-    // 
-    // "addresses" is a vector of successor addresses.
-    //
-    // "labels" is a vector of addresses that need to be labelled due to
-    // the instruction at address.
-    //
-    // "indeterminate" is true if the set of successor addresses
-    // couldn't be determined without knowledge of program state.
-    // (e.g. because "instruction" is an indirect jump or an interrupt
-    // that might end the program).
-
-    fn successors(&self, instruction: I, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
 }
 
 pub trait SimulatorTrait<S: StateTrait<S>, I: InstructionTrait> {
@@ -41,6 +25,22 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_call(&self) -> bool;
     fn is_return(&self) -> bool;
     fn is_rel_branch(&self) -> bool;
+
+    // successors(instruction, offset) -> (addresses, labels, indeterminate)
+    // successors computes the instruction's successors from
+    // its optype and operands, assuming it is found at offset in the program.
+    // 
+    // "addresses" is a vector of successor addresses.
+    //
+    // "labels" is a vector of addresses that need to be labelled due to
+    // the instruction at address.
+    //
+    // "indeterminate" is true if the set of successor addresses
+    // couldn't be determined without knowledge of program state.
+    // (e.g. because "instruction" is an indirect jump or an interrupt
+    // that might end the program).
+
+    fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
 }
 
 pub struct Listing<Instruction: InstructionTrait> {
