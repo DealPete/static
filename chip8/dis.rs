@@ -106,7 +106,7 @@ fn decode_8xyn(x: usize, y: usize, n: u8) -> Result<Instruction, String> {
             0x6 => Mnemonic::SHR,
             0x7 => Mnemonic::SUBN,
             0xE => Mnemonic::SHL,
-            _ => return Err(String::from("Unknown code"))
+            _ => return Err(format!("Unknown instruction code 8{:x}{:x}{:x}", x, y, n))
         })
     })
 }
@@ -186,6 +186,6 @@ fn decode_fxkk(x: usize, kk: u8) -> Result<Instruction, String> {
             op2: Some(Operand::UserFlags),
             .. Instruction::new(Mnemonic::LD)
         }),
-        _ => Err(String::from("Unknown code"))
+        _ => Err(format!("Unknown instruction code f{:x}{:02x}", x, kk))
     }
 }

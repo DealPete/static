@@ -13,7 +13,10 @@ pub fn recursive_descent<I, A>(file_buffer: &Vec<u8>, architecture: A, entry_off
         if let None = listing.get(offset) {
             let inst = match architecture.decode_instruction(file_buffer, offset) {
                 Ok(instruction) => instruction,
-                Err(err) => panic!(err)
+                Err(err) => {
+                    println!("{}", err);
+                    return listing;
+                }
             };
 
             let (addresses, labels, indeterminate) = inst.successors(offset);

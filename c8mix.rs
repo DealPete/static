@@ -2,7 +2,9 @@ pub mod analyse;
 pub mod defs;
 pub mod graph;
 pub mod chip8;
-mod slicer;
+mod c8analyzer;
+
+use defs::Architecture;
 
 fn main() {
     use std::env;
@@ -18,13 +20,12 @@ fn main() {
 
         let result = analyse::analyse(
             &buffer, chip8::arch::Chip8 {},
-            slicer::Chip8Slicer {}, 0);
+            c8analyzer::Chip8Analyzer {}, 0);
 
         match result {
             Ok(graph) => {
-                let slicer = slicer::Chip8Slicer {};
-                let slice = slicer.from_operand(&graph, 0x12, chip8::arch::Operand::V(0));
-                println!("{:?}", slice);
+                println!("{}", graph);
+                chip8::arch::Chip8::print_listing(graph.listing());
             },
             Err(error) => println!("{}", error)
         }

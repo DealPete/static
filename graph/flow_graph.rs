@@ -1,3 +1,4 @@
+use graph::state_flow_graph::StateFlowGraph;
 use defs::*;
 use std::fmt;
 use std::collections::HashMap;
@@ -11,15 +12,28 @@ pub struct FlowGraph<I: InstructionTrait> {
 }
 
 impl<I: InstructionTrait> FlowGraph<I> {
-    pub fn new(entry_offset: usize) -> FlowGraph<I> {
+    pub fn new() -> FlowGraph<I> {
         FlowGraph {
-            listing: Listing::new(entry_offset),
+            listing: Listing::new(),
+            nodes: vec!(Node::new()),
+            edges: Vec::new(),
+            inst_map: HashMap::new()
+        }
+    }
+
+    pub fn with_entry(entry_offset: usize) -> FlowGraph<I> {
+        FlowGraph {
+            listing: Listing::with_entry(entry_offset),
             nodes: vec!(Node {
+                outbound_edges: [0].iter().cloned().collect(),
+                .. Node::new()
+            }, Node {
                 insts: vec!(entry_offset),
+                inbound_edges: [0].iter().cloned().collect(),
                 .. Node::new()
             }),
-            edges: Vec::new(),
-            inst_map: [(entry_offset, 0)].iter().cloned().collect()
+            edges: vec!(Edge::new(0, 1)),
+            inst_map: [(entry_offset, 1)].iter().cloned().collect()
         }
     }
 
@@ -38,9 +52,10 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
 
-    pub fn get_entry_node(&self) -> usize {
-        self.get_node_at(self.listing.entry_offset)
-            .expect("Graph has no entry node!")
+    pub fn get_entry_nodes(&self) -> Vec<usize> {
+        self.listing.entry_offsets.iter().map(|offset|
+            self.get_node_at(*offset).expect("Graph has no entry node!"))
+            .collect()
     }
 
     pub fn get_instructions_at_node(&self, node: usize) -> &[usize] {
@@ -65,6 +80,15 @@ impl<I: InstructionTrait> FlowGraph<I> {
         nodes
     }
 
+    pub fn remove_node(&mut self, node_index: usize) {
+        let node = self.nodes[node_index].clone();
+        for in_edge in node.inbound_edges.iter() {
+            for out_edge in node.outbound_edges.iter() {
+                self.add_edge(*in_edge, *out_edge);
+            }
+        }
+    }
+
     pub fn has_edge(&self, source: usize, target: usize) -> bool {
         for out in self.nodes[source].outbound_edges.iter() {
             if self.edges[*out].to == target {
@@ -83,12 +107,12 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
     
-    pub fn get_inst(&self, address: usize) -> Option<&I> {
-        self.listing.instructions.get(&address)
+    pub fn get_inst(&self, offset: usize) -> Option<&I> {
+        self.listing.instructions.get(&offset)
     }
 
-    pub fn add_label(&mut self, address: usize) {
-        self.listing.add_label(address);
+    pub fn add_label(&mut self, offset: usize) {
+        self.listing.add_label(offset);
     }
 
     pub fn initial_instruction(&self, node_index: usize) -> Result<usize, String> {
@@ -109,6 +133,10 @@ impl<I: InstructionTrait> FlowGraph<I> {
         
     pub fn add_inst_to_listing(&mut self, offset: usize, instruction: I) {
         self.listing.add(offset, instruction);
+    }
+
+    pub fn listing(&self) -> &Listing<I> {
+        &self.listing
     }
 
     pub fn insert_offset_at_node_index(&mut self, offset: usize, node_index: usize) {
@@ -157,19 +185,19 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
 
-    pub fn insert_addresses(&mut self, source: usize, addresses: Vec<usize>) -> Vec<usize> {
+    pub fn insert_offsets(&mut self, source: usize, targets: Vec<usize>, branching: bool) -> Vec<usize> {
         let node_index = self.get_node_at(source)
-            .expect(format!("No node at instruction offset {}", source).as_str());
+            .expect(format!("No node at instruction offset {:x}", source).as_str());
 
         let mut unexplored = Vec::new();
-        let branching = addresses.len() > 1;
 
-        for successor in addresses {
+        for successor in targets {
             match self.get_node_at(successor) {
                 None => {
                     if branching {
                         let new_node_index = self.add_node_at(successor);
                         self.add_edge(node_index, new_node_index);
+                        self.add_label(successor);
                     } else {
                         self.insert_offset_at_node_index(successor, node_index);
                     }
@@ -186,8 +214,45 @@ impl<I: InstructionTrait> FlowGraph<I> {
 
         unexplored
     }
+
+    pub fn show_slice(&self, slice: &HashSet<usize>) {
+        let mut output = String::from("=== Flow Graph ===\n\n");
+        for i in 1..self.nodes.len() {
+            output.push_str(format!("=== Node {} [{:x}] ===", i,
+                self.initial_instruction(i).unwrap()).as_str());
+            let ref node = self.nodes[i];
+            let mut has_instructions = false;
+            for inst in node.insts.iter() {
+                if slice.contains(&inst) {
+                    has_instructions = true;
+                    output.push_str(
+                        format!("\n{}", self.listing.get(*inst).unwrap()).as_str());
+                }
+            }
+            if has_instructions {
+                if !node.inbound_edges.is_empty() {
+                    let mut inbound = String::new();
+                    for edge in node.inbound_edges.iter() {
+                        inbound.push_str(format!("{} ", self.edges[*edge].get_from()).as_str());
+                    }
+                    output.push_str(format!("\nInbound nodes: {}", inbound).as_str());
+                }
+                if !node.outbound_edges.is_empty() {
+                    let mut outbound = String::new();
+                    for edge in node.outbound_edges.iter() {
+                        outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
+                    }
+                    output.push_str(format!("\nOutbound nodes: {}", outbound).as_str());
+                }
+            }
+            output.push_str("\n"); 
+        }
+
+        println!("{}", output)
+    }
 }
 
+#[derive(Clone)]
 pub struct Node {
     pub insts: Vec<usize>,
     pub inbound_edges: HashSet<usize>,
@@ -233,7 +298,7 @@ impl Edge {
 impl<I: InstructionTrait> fmt::Display for FlowGraph<I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = String::from("=== Flow Graph ===\n\n");
-        for i in 0..self.nodes.len() {
+        for i in 1..self.nodes.len() {
             output.push_str(format!("=== Node {} [{:x}] ===\n", i,
                 self.initial_instruction(i).unwrap()).as_str());
             let ref node = self.nodes[i];
@@ -262,8 +327,23 @@ impl<I: InstructionTrait> fmt::Display for FlowGraph<I> {
     }
 }
 
-pub type FlowGraphSlice = HashSet<usize>;
+pub trait AnalyzerTrait<I: InstructionTrait> {
+    fn determine_successors(&self, file_buffer: &[u8], graph: &FlowGraph<I>, offset: usize) -> Result<HashSet<usize>, String>;
+}
 
-pub trait SlicerTrait<I: InstructionTrait> {
-    fn create_slice(graph: &FlowGraph<I>, offset: usize) -> Result<FlowGraphSlice, String>;
+impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
+    pub fn from_flow_graph(graph: &FlowGraph<I>, state: S) -> StateFlowGraph<I, S> {
+        let mut new_graph = StateFlowGraph::from_listing(graph.listing());
+        for index in 0..graph.nodes.len() {
+            new_graph.add_node_with_insts(graph.get_instructions_at_node(index));
+        }
+        for edge in graph.edges.iter() {
+            new_graph.add_edge(edge.get_from(), edge.get_to());
+        }
+        for node in graph.get_entry_nodes() {
+            new_graph.add_state(state.clone(), node);
+        }
+
+        new_graph
+    }
 }

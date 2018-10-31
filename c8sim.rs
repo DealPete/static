@@ -42,8 +42,8 @@ fn main() {
         );
 
         match result {
-            Ok((_state_graph, listing)) => {
-                listing.print_instructions()
+            Ok(state_graph) => {
+                state_graph.listing().print_instructions();
             },
             Err(error) => println!("{}", error)
         }

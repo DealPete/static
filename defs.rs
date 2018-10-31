@@ -5,6 +5,7 @@ use std::ops::Add;
 
 pub trait Architecture<I: InstructionTrait> : Copy + Clone {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<I, String>;
+    fn print_listing(listing: &Listing<I>);
 }
 
 pub trait SimulatorTrait<S: StateTrait<S>, I: InstructionTrait> {
@@ -26,37 +27,49 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_return(&self) -> bool;
     fn is_rel_branch(&self) -> bool;
 
-    // successors(instruction, offset) -> (addresses, labels, indeterminate)
+    // successors(instruction, offset) -> (offsets, labels, indeterminate)
     // successors computes the instruction's successors from
-    // its optype and operands, assuming it is found at offset in the program.
+    // its optype and operands, assuming it is found at offset in the
+    // file buffer.
     // 
-    // "addresses" is a vector of successor addresses.
+    // "offsets" is a vector of successor offsets.
     //
-    // "labels" is a vector of addresses that need to be labelled due to
-    // the instruction at address.
+    // "labels" is a vector of offsets that need to be labelled due to
+    // the instruction at offset.
     //
-    // "indeterminate" is true if the set of successor addresses
+    // "indeterminate" is true if the set of successor offsets
     // couldn't be determined without knowledge of program state.
-    // (e.g. because "instruction" is an indirect jump or an interrupt
+    // (e.g. because instruction is an indirect jump or an interrupt
     // that might end the program).
 
     fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
 }
 
-pub struct Listing<Instruction: InstructionTrait> {
-    pub entry_offset: usize,
+#[derive(Clone)]
+pub struct Listing<I: InstructionTrait> {
+    pub entry_offsets: Vec<usize>,
     pub highest_offset: usize,
-    pub instructions: HashMap<usize, Instruction>,
+    pub instructions: HashMap<usize, I>,
     labels: HashSet<usize>,
     indeterminates: HashSet<usize>
 }
 
 impl<I: InstructionTrait> Listing<I> {
-    pub fn new(entry_offset: usize) -> Listing<I> {
+    pub fn new() -> Listing<I> {
         Listing {
-            entry_offset: entry_offset,
-            highest_offset: entry_offset,
+            entry_offsets: Vec::new(),
+            highest_offset: 0,
             instructions: HashMap::<usize, I>::new(),
+            labels: HashSet::new(),
+            indeterminates: HashSet::new()
+        }
+    }
+
+    pub fn with_entry(entry_offset: usize) -> Listing<I> {
+        Listing {
+            entry_offsets: vec!(entry_offset),
+            highest_offset: entry_offset,
+            instructions: HashMap::new(),
             labels: HashSet::new(),
             indeterminates: HashSet::new()
         }
@@ -89,7 +102,6 @@ impl<I: InstructionTrait> Listing<I> {
     pub fn is_indeterminate(&self, offset: usize) -> bool {
         self.indeterminates.contains(&offset)
     }
-
 }
 
 pub enum SimResult<S: StateTrait<S>> {

@@ -10,15 +10,13 @@ impl<'a> Architecture<Instruction> for Chip8 {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<Instruction, String> {
         dis::decode_instruction(buffer, offset)
     }
-}
 
-impl Listing<Instruction> {
-    pub fn print_instructions(&self) {
+    fn print_listing(listing: &Listing<Instruction>) {
         let mut output = String::new();
         let mut last_inst_was_skip = false;
         for i in 0..0x1000 {
-            if let Some(instruction) = self.instructions.get(&i) {
-                if self.is_labelled(i) {
+            if let Some(instruction) = listing.instructions.get(&i) {
+                if listing.is_labelled(i) {
                     output.push_str(format!("{:4x}:   ", i + 0x200).as_str());
                 } else {
                     output.push_str("        ");
@@ -30,7 +28,7 @@ impl Listing<Instruction> {
                 last_inst_was_skip = false;
                     
                 output.push_str(format!("{}{}\n",
-                    if self.is_indeterminate(i) {
+                    if listing.is_indeterminate(i) {
                         "* "
                     } else {
                         ""
@@ -39,7 +37,7 @@ impl Listing<Instruction> {
                     || instruction.mnemonic == Mnemonic::SNE
                     || instruction.mnemonic == Mnemonic::SKP
                     || instruction.mnemonic == Mnemonic::SKNP {
-                    if let None = self.instructions.get(&(i+2)) {
+                    if let None = listing.instructions.get(&(i+2)) {
                         output.push_str("            ????\n");
                     } else {
                         last_inst_was_skip = true;
@@ -136,7 +134,7 @@ impl fmt::Display for Instruction {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Operand {
     I,
     V(usize),
