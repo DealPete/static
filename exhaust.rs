@@ -60,7 +60,7 @@ pub fn simulate_exhaustively<S, I, A, Z>(file_buffer: &Vec<u8>, simulator: Z, in
                         }
                     }
                 },
-                SimResult::Branch((new_states, new_labels)) => {
+                SimResult::Branch(new_states, new_labels) => {
                     for new_state in new_states {
                         graph.extend_with_state(inst_offset, Z::next_inst_offset(&new_state), new_state) 
                     }

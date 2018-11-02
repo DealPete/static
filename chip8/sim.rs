@@ -24,7 +24,7 @@ impl<'a> SimulatorTrait<State<'a>, Instruction> for Interpreter {
                 SimResult::State(state),
             Mnemonic::JP | Mnemonic::CALL | Mnemonic::SE | Mnemonic::SNE
             | Mnemonic::SKP | Mnemonic::SKNP | Mnemonic::RET =>
-                SimResult::Branch(self.branch(state, instruction)),
+                self.branch(state, instruction),
             Mnemonic::LD => simulate_ld(state, instruction),
             Mnemonic::ADD | Mnemonic::SUB | Mnemonic::OR | Mnemonic::AND
             | Mnemonic::XOR | Mnemonic::SUBN | Mnemonic::SHL | Mnemonic::SHR =>
@@ -40,7 +40,7 @@ impl<'a> SimulatorTrait<State<'a>, Instruction> for Interpreter {
 }
 
 impl<'a> Interpreter {
-    fn branch(&self, mut state: State<'a>, instruction: Instruction) -> (Vec<State<'a>>, Vec<usize>) {
+    fn branch(&self, mut state: State<'a>, instruction: Instruction) -> SimResult<State<'a>> {
         let mut new_states = Vec::new();
         let mut new_labels = Vec::new();
 
@@ -50,7 +50,8 @@ impl<'a> Interpreter {
                 state.sp += 1;
                 state.pc = match instruction.unpack_op1() {
                     Operand::Address(word) => word,
-                    _ => panic!("CALL operand should be immediate address.")
+                    _ => return SimResult::Error(state,
+                        "CALL operand should be immediate address.".into())
                 };
                 new_labels.push(Interpreter::next_inst_offset(&state));
                 new_states.push(state);
@@ -71,10 +72,10 @@ impl<'a> Interpreter {
                     Operand::V(0) => match instruction.unpack_op2() {
                         Operand::Address(base) => {
                             match state.V[0] {
-                                Byte::Undefined => panic!(
-                                    "Can't jump to undefined offset"),
-                                Byte::AnyValue => panic!(
-                                    "Can't jump to every address"),
+                                Byte::Undefined => return SimResult::Error(
+                                    state.clone(), "Can't jump to undefined offset".into()),
+                                Byte::AnyValue => return SimResult::Error(
+                                    state.clone(), "Can't jump to every address".into()),
                                 Byte::Int(ref set) => {
                                     for offset in set {
                                         let mut new_state = state.clone();
@@ -86,9 +87,10 @@ impl<'a> Interpreter {
                                 }
                             }
                         },
-                        _ => panic!("base of indirect jump should be imm16")
+                        _ => return SimResult::Error(state,
+                            "base of indirect jump should be imm16".into())
                     },
-                    _ => panic!("Invalid JP operand.")
+                    _ => return SimResult::Error(state, "Invalid JP operand.".into())
                 }
             },
             Mnemonic::SKP | Mnemonic::SKNP => {
@@ -132,7 +134,7 @@ impl<'a> Interpreter {
             _ => panic!("unimplemented jump instruction")
         }
 
-        (new_states, new_labels)
+        SimResult::Branch(new_states, new_labels)
     }
 }
 
@@ -197,8 +199,10 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
                         string.push(state.V[i].clone());
                     }
                     match state.I {
-                        Word::Undefined => panic!("Can't write to undefined memory location."),
-                        Word::AnyValue => panic!("Can't write to all memory locations."),
+                        Word::Undefined => return SimResult::Error(state.clone(),
+                            "Can't write to undefined memory location.".into()),
+                        Word::AnyValue => return SimResult::Error(state.clone(),
+                            "Can't write to all memory locations.".into()),
                         Word::Int(ref set) => {
                             for address in set.iter() {
                                 state.memory.write_string(*address as usize, &string);
@@ -212,8 +216,10 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
         },
         Operand::V(x) => {
             match state.I {
-                Word::Undefined => panic!("Can't read from undefined memory location."),
-                Word::AnyValue => panic!("Can't read from every memory location."),
+                Word::Undefined => return SimResult::Error(state.clone(),
+                    "Can't read from undefined memory location.".into()),
+                Word::AnyValue => return SimResult::Error(state.clone(),
+                    "Can't read from every memory location.".into()),
                 Word::Int(ref set) => {
                     for i in 0..(x+1) {
                         let mut values = Byte::from_vec(Vec::new());
@@ -221,7 +227,8 @@ fn simulate_ldptr<'a>(mut state: State<'a>, inst: Instruction) -> SimResult<Stat
                             let memory_byte = state.memory.get_byte(*address as usize  + i);
                             match memory_byte {
                                 Some(byte) => values = values.union(byte),
-                                None => return SimResult::Error(state.clone(), String::from(format!("Tried to read from uninitialized memory location {:x}", *address)))
+                                None => return SimResult::Error(state.clone(),
+                                    format!("Tried to read from uninitialized memory location {:x}", *address))
                             }
                         }
                         state.V[i] = values;

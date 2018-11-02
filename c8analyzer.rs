@@ -175,20 +175,21 @@ fn simulate_slice<'a>(file_buffer: &'a [u8], flow_graph: &FlowGraph<Instruction>
 
         loop {
             let inst_offset = Interpreter::next_inst_offset(&state);
-            let inst = match graph.get_inst(inst_offset) {
-                None => None,
-                Some(inst) => Some(inst.clone())
-            };
 
-            match inst {
-                Some(inst) => match interpreter.simulate_next_instruction(state, inst) {
+            if slice.contains(&inst_offset) {
+                let inst = match graph.get_inst(inst_offset) {
+                    None => panic!("no instruction at offset {}", inst_offset),
+                    Some(inst) => inst.clone()
+                };
+                
+                match interpreter.simulate_next_instruction(state, inst) {
                     SimResult::Error(state, error) => {
                         println!("{}", state.debug_string());
                         return Err(error)
                     },
                     SimResult::End => break,
                     SimResult::State(next_state) => state = next_state,
-                    SimResult::Branch((new_states, _)) => {
+                    SimResult::Branch(new_states, _) => {
                         for new_state in new_states {
                             if let Some(node) = graph.get_node_at(
                                 Interpreter::next_inst_offset(&new_state)) {
@@ -197,20 +198,19 @@ fn simulate_slice<'a>(file_buffer: &'a [u8], flow_graph: &FlowGraph<Instruction>
                         }
                         break;
                     }
-                },
-                None => {
-                    if index == insts.len() - 1 {
-                        for adjacent_node in graph.get_next_nodes(node) {
-                            let mut new_state = state.clone();
-                            let new_offset = graph.initial_instruction(adjacent_node).unwrap();
-                            new_state.pc = new_offset as u16 + 0x200;
-                            graph.add_state(new_state, adjacent_node);
-                        }
-                        break;
-                    }
-
-                    state.pc = insts[index+1] as u16 + 0x200;
                 }
+            } else {
+                if index == insts.len() - 1 {
+                    for adjacent_node in graph.get_next_nodes(node) {
+                        let mut new_state = state.clone();
+                        let new_offset = graph.initial_instruction(adjacent_node).unwrap();
+                        new_state.pc = new_offset as u16 + 0x200;
+                        graph.add_state(new_state, adjacent_node);
+                    }
+                    break;
+                }
+
+                state.pc = insts[index+1] as u16 + 0x200;
             }
 
             index += 1;

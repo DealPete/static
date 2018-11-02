@@ -313,8 +313,8 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         let node_index = self.state_map[&state_index];
 
         if !self.nodes[node_index].remove_state(state_index) {
-            panic!(format!("Node {} does not contain state_index {}",
-                node_index, state_index));
+            panic!("Node {} does not contain state_index {}",
+                node_index, state_index);
         }
         
         if state_index == final_index {
@@ -328,8 +328,8 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         let node = self.nodes.get_mut(final_index_node_index)
             .expect("no node at final index!");
         if !node.remove_state(final_index) {
-            panic!(format!("Node {} does not contain state_index {}",
-                final_index_node_index, final_index));
+            panic!("Node {} does not contain state_index {}",
+                final_index_node_index, final_index);
         }
         node.add_state(state_index);
         self.state_map.insert(state_index, final_index_node_index);

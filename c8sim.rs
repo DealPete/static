@@ -3,6 +3,9 @@ pub mod defs;
 mod exhaust;
 mod chip8;
 
+use defs::Architecture;
+use chip8::arch::Chip8;
+
 fn main() {
     use std::env;
     use std::io::Read;
@@ -37,13 +40,13 @@ fn main() {
             &buffer,
             simulator,
             initial_state,
-            chip8::arch::Chip8 {},
+            Chip8 {},
             log_type,
         );
 
         match result {
             Ok(state_graph) => {
-                state_graph.listing().print_instructions();
+                Chip8::print_listing(state_graph.listing());
             },
             Err(error) => println!("{}", error)
         }

@@ -108,7 +108,7 @@ pub enum SimResult<S: StateTrait<S>> {
     Error(S, String),
     End,
     State(S),
-    Branch((Vec<S>, Vec<usize>))
+    Branch(Vec<S>, Vec<usize>)
 }
 
 pub enum CombineResult<S: StateTrait<S>> {
