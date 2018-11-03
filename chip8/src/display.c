@@ -5,14 +5,14 @@
 const int WINDOW_WIDTH = 1024;
 const int WINDOW_HEIGHT = 512;
 
-const int r = 0xa0;
-const int g = 0x50;
+const int r = 0xb0;
+const int g = 0x60;
 const int b = 0x0;
 
 SDL_Window* window = NULL;
 SDL_Surface* surface = NULL;
 SDL_Renderer* renderer = NULL;
-SDL_Rect box;
+bool use_hires = false;
 
 bool init_window(char* filename) {
 	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -34,9 +34,6 @@ bool init_window(char* filename) {
 
 	surface = SDL_GetWindowSurface(window);
 
-	box.w = 16;
-	box.h = 16;
-
 	clear_screen();
 
 	return true;
@@ -53,7 +50,19 @@ void clear_screen() {
 	SDL_RenderClear(renderer);
 }
 
+void hires() {
+	use_hires = true;
+	clear_screen();
+}
+
+void lores() {
+	use_hires = false;
+	clear_screen();
+}
+
 void draw_sprite(unsigned char *I, int xpos, int ypos, int lines) {
+	SDL_Rect box;
+
 	for(int y = 0; y < lines; y++) {
 		int x;
 		unsigned char bit;
@@ -64,9 +73,19 @@ void draw_sprite(unsigned char *I, int xpos, int ypos, int lines) {
 				SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 			}
 				
-			box.x = (xpos + x) * 16; 
-			box.y = (ypos + y) * 16;
-			SDL_RenderFillRect(renderer, &box);
+			if (use_hires) {
+				box.h = 8;
+				box.w = 8;
+				box.x = (xpos + x) * 8;
+				box.y = (ypos + y) * 8;
+				SDL_RenderFillRect(renderer, &box);
+			} else {
+				box.h = 16;
+				box.w = 16;
+				box.x = (xpos + x) * 16; 
+				box.y = (ypos + y) * 16;
+				SDL_RenderFillRect(renderer, &box);
+			}
 		}
 
 		I++;

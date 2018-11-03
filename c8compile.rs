@@ -13,6 +13,7 @@ static PRELUDE: &str =
 #include <stdint.h>
 
 unsigned char memory[4096] = {
+    // numerals
 	0xf0, 0x90, 0x90, 0x90, 0xf0,	// 0
 	0x20, 0x60, 0x20, 0x20, 0x70,	// 1
 	0xf0, 0x10, 0xf0, 0x80, 0xf0,	// 2
@@ -28,7 +29,41 @@ unsigned char memory[4096] = {
 	0xf0, 0x80, 0x80, 0x80, 0xf0,	// C
 	0xe0, 0x90, 0x90, 0x90, 0xe0,	// D
 	0xf0, 0x80, 0xf0, 0x80, 0xf0,	// E
-	0xf0, 0x80, 0xf0, 0x80, 0x80	// F
+	0xf0, 0x80, 0xf0, 0x80, 0x80,	// F
+
+    // big numerals (for SuperChip8)
+    0xff, 0xff, 0xc3, 0xc3, 0xc3,
+    0xc3, 0xc3, 0xc3, 0xff, 0xff,   // 0
+    0x18, 0x78, 0x78, 0x18, 0x18,
+    0x18, 0x18, 0x18, 0xff, 0xff,   // 1
+    0xff, 0xff, 0x03, 0x03, 0xff,
+    0xff, 0xc0, 0xc0, 0xff, 0xff,   // 2
+    0xff, 0xff, 0x03, 0x03, 0xff,
+    0xff, 0x03, 0x03, 0xff, 0xff,   // 3
+    0xc3, 0xc3, 0xc3, 0xc3, 0xff,
+    0xff, 0x03, 0x03, 0x03, 0x03,   // 4
+    0xff, 0xff, 0xc0, 0xc0, 0xff,
+    0xff, 0x03, 0x03, 0xff, 0xff,   // 5
+    0xff, 0xff, 0xc0, 0xc0, 0xff,
+    0xff, 0xc3, 0xc3, 0xff, 0xff,   // 6 
+    0xff, 0xff, 0x03, 0x03, 0x06,
+    0x0c, 0x18, 0x18, 0x18, 0x18,   // 7
+    0xff, 0xff, 0xc3, 0xc3, 0xff,
+    0xff, 0xc3, 0xc3, 0xff, 0xff,   // 8
+    0xff, 0xff, 0xc3, 0xc3, 0xff,
+    0xff, 0x03, 0x03, 0xff, 0xff,   // 9
+    0x7e, 0xff, 0xc3, 0xc3, 0xc3,
+    0xff, 0xff, 0xc3, 0xc3, 0xc3,   // a
+    0xfc, 0xfc, 0xc3, 0xc3, 0xfc,
+    0xfc, 0xc3, 0xc3, 0xfc, 0xfc,   // b
+    0x3c, 0xff, 0xc3, 0xc0, 0xc0,
+    0xc0, 0xc0, 0xc3, 0xff, 0x3c,   // c
+    0xfc, 0xfe, 0xc3, 0xc3, 0xc3,
+    0xc3, 0xc3, 0xc3, 0xfe, 0xfc,   // d
+    0xff, 0xff, 0xc0, 0xc0, 0xff,
+    0xff, 0xc0, 0xc0, 0xff, 0xff,   // e
+    0xff, 0xff, 0xc0, 0xc0, 0xff,
+    0xff, 0xc0, 0xc0, 0xc0, 0xc0    // f
 };
 
 int8_t V[16] = {
@@ -48,8 +83,10 @@ static POSTLUDE: &str =
 ";
 
 static MAKEFILE: &str =
-"all: {}.c chip/src/*.c
-\tcc -o game `sdl2-config --cflags --libs` -lsodium
+"TARGETS = {}.c chip8/src/input.c chip8/src/display.c
+
+all: $(TARGETS)
+\tcc -o game `sdl2-config --cflags --libs` -lsodium $(TARGETS)
 
 clean:
 \t$(RM) game
@@ -137,10 +174,13 @@ fn compile_node(graph: &FlowGraph<Instruction>, node: usize) -> String {
 
         output.push_str("\t");
         output.push_str( match inst.mnemonic {
+            Mnemonic::LOW => "lores();\n".into(),
+            Mnemonic::HIGH => "hires();\n".into(),
             Mnemonic::CLS => "clear_screen();\n".into(),
             Mnemonic::LD => load(inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::ADD => add(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SE => split_equal(*offset, inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SNE => split(false, *offset, inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SE => split(true, *offset, inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::JP => jump(*offset, inst.unpack_op1(), inst.op2),
             Mnemonic::DRW => draw(inst.unpack_op1(), inst.unpack_op2(), inst.unpack_op3()),
             //Mnemonic::CALL => call(*offset, inst.unpack_op1()),
@@ -160,6 +200,8 @@ fn load(op1: Operand, op2: Operand) -> String {
                 format!("I = {:x};\n", address),
             Operand::Numeral(n) =>
                 format!("I = 5 * V[{}];\n", n),
+            Operand::LargeNumeral(n) =>
+                format!("I = 10 * V[{}] + 80;\n", n),
             _ => panic!("invalid operand for LD I, ?.") 
         },
         Operand::V(x) => match op2 {
@@ -206,17 +248,18 @@ fn jump(offset: usize, op1: Operand, op2: Option<Operand>) -> String {
     }
 }
 
-fn split_equal(offset: usize, op1: Operand, op2: Operand) -> String {
+fn split(equal: bool, offset: usize, op1: Operand, op2: Operand) -> String {
     let address = offset + 0x200;
+    let comparison = if equal { "==" } else { "!=" };
 
     match op1 {
         Operand::V(x) => match op2 {
             Operand::Byte(byte) => format!(
-                "if (V[{}] == {}) goto l{:x}; else goto l{:x};\n",
-                x, byte, address + 4, address + 2),
+                "if (V[{}] {} {}) goto l{:x}; else goto l{:x};\n",
+                x, comparison, byte, address + 4, address + 2),
             Operand::V(y) => format!(
-                "if (V[{}] == V[{}]) goto l{:x}; else goto l{:x};\n",
-                x, y, address + 4, address + 2),
+                "if (V[{}] {} V[{}]) goto l{:x}; else goto l{:x};\n",
+                x, comparison, y, address + 4, address + 2),
             _ => panic!("invalid operand for SE")
         },
         _ => panic!("invalid operand for SE")
