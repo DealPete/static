@@ -76,6 +76,11 @@ impl Instruction {
         self.op2.expect(
             format!("Instruction doesn't have a second operand: {}", self).as_str())
     }
+
+    pub fn unpack_op3(&self) -> Operand {
+        self.op3.expect(
+            format!("Instruction doesn't have a second operand: {}", self).as_str())
+    }
 }
 
 impl InstructionTrait for Instruction {

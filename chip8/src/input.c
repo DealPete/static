@@ -54,3 +54,9 @@ int process_input() {
 	return -1;
 }
 
+int wait_for_keypress() {
+	int key;
+
+	while ((key = process_input()) == -1);
+	return key;
+}

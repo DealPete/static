@@ -14,13 +14,13 @@ SDL_Surface* surface = NULL;
 SDL_Renderer* renderer = NULL;
 SDL_Rect box;
 
-bool init_window() {
+bool init_window(char* filename) {
 	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
 		printf("Error initializing SDL video: %s\n", SDL_GetError());
 		return false;
 	}
 
-	window = SDL_CreateWindow("Fun Game", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
+	window = SDL_CreateWindow(filename, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
 	if (window == NULL) {
 		printf("Error creating SDL window: %s\n", SDL_GetError());
 		return false;
@@ -37,9 +37,7 @@ bool init_window() {
 	box.w = 16;
 	box.h = 16;
 
-	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-	SDL_RenderClear(renderer);
-	SDL_RenderPresent(renderer);
+	clear_screen();
 
 	return true;
 }
@@ -50,7 +48,12 @@ void close_window() {
 	SDL_Quit();
 }
 
-void draw(unsigned char* I, int xpos, int ypos, int lines) {
+void clear_screen() {
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
+}
+
+void draw_sprite(unsigned char *I, int xpos, int ypos, int lines) {
 	for(int y = 0; y < lines; y++) {
 		int x;
 		unsigned char bit;

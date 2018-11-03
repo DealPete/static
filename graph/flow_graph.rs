@@ -89,6 +89,10 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
 
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn has_edge(&self, source: usize, target: usize) -> bool {
         for out in self.nodes[source].outbound_edges.iter() {
             if self.edges[*out].to == target {
@@ -117,9 +121,12 @@ impl<I: InstructionTrait> FlowGraph<I> {
 
     pub fn initial_instruction(&self, node_index: usize) -> Result<usize, String> {
         if node_index >= self.nodes.len() {
-            Err(String::from("Node doesn't exist."))
+            Err("Node doesn't exist.".into())
         } else {
-            Ok(*self.nodes[node_index].insts.first().unwrap())
+            match self.nodes[node_index].insts.first() {
+                None => Err("Node has no instructions".into()),
+                Some(offset) => Ok(*offset)
+            }
         }
     }
 

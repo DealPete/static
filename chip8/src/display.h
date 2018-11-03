@@ -1,5 +1,7 @@
 #include <stdbool.h>
+#include <stdint.h>
 
-bool init_window();
+bool init_window(char* filename);
 void close_window();
-void draw(unsigned char* I, int xpos, int ypos, int lines);
+void clear_screen();
+void draw_sprite(unsigned char* I, int xpos, int ypos, int lines);
