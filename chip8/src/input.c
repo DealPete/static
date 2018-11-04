@@ -1,14 +1,15 @@
+#include "input.h"
 #include "SDL.h"
 #include "display.h"
 #include <stdbool.h>
 
 SDL_Event e;
 
-int process_input() {
+int8_t process_input(bool* quitting) {
 	SDL_PollEvent(&e);
 
 	if (e.type == SDL_QUIT) {
-		return -2;
+		*quitting = true;
 	}
 
 	if (e.type != SDL_KEYDOWN) {

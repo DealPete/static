@@ -1,3 +1,4 @@
+#include <api.h>
 #include "SDL.h"
 #include "SDL_thread.h"
 #include "display.h"
@@ -10,6 +11,7 @@ SDL_cond* window_free = NULL;
 int screen_width;
 int screen_height;
 bool use_hires;
+bool quitting;
 
 int init(char* filename) {
 	if (sodium_init() < 0) {
@@ -45,7 +47,6 @@ void clear_screen() {
 }
 
 void hires() {
-	hires_screen_mode();
 	screen_width = 128;
 	screen_height = 64;
 	use_hires = true;
@@ -53,18 +54,34 @@ void hires() {
 }
 
 void lores() {
-	lores_screen_mode();
 	screen_width = 64;
 	screen_height = 32;
 	use_hires = false;
 	clear_screen();
 }
 
-int wait_for_keypress() {
-	int key;
+int8_t wait_for_keypress() {
+	int8_t key;
 
-	while ((key = process_input()) == -1);
+	while ((key = process_input(&quitting)) == -1);
 	return key;
+}
+
+bool check_for_quit() {
+	return quitting;
+}
+
+int random_int32() {
+	return randombytes_random();
+}
+
+void draw_screen() {
+	SDL_LockMutex(window_lock);
+	SDL_CondWait(window_free, window_lock);
+
+	draw_window(use_hires);
+
+	SDL_CondSignal(window_free);
 }
 
 void draw_sprite(unsigned char *I, int xpos, int ypos, int lines) {

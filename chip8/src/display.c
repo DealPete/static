@@ -55,7 +55,10 @@ void close_window() {
 }
 
 void clear_window() {
-	SDL_
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
+}
+
 void draw_window(bool hires) {
 
 	if (hires)

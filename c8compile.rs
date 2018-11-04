@@ -93,6 +93,10 @@ int8_t V[16] = {
 
 int16_t I = 0;
 
+char* get_filename() {
+    return \"{filename}\";
+}
+
 int run_game(void* data) {
 
 ";
@@ -322,7 +326,7 @@ fn random(op1: Operand, op2: Operand) -> String {
         _ => panic!("invalid operand for RND Vx, ?.")
     };
 
-    format!("V[{}] = (randombytes_random() % 256) & {};\n",
+    format!("V[{}] = (random_int32() % 256) & {};\n",
         target, mask)
 }
 
