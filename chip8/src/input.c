@@ -8,8 +8,7 @@ int process_input() {
 	SDL_PollEvent(&e);
 
 	if (e.type == SDL_QUIT) {
-		close_window();
-		exit(0);
+		return -2;
 	}
 
 	if (e.type != SDL_KEYDOWN) {
@@ -52,11 +51,4 @@ int process_input() {
 	}
 
 	return -1;
-}
-
-int wait_for_keypress() {
-	int key;
-
-	while ((key = process_input()) == -1);
-	return key;
 }

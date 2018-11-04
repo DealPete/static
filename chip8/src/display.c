@@ -1,6 +1,4 @@
-#include "SDL.h"
 #include "display.h"
-#include <stdio.h>
 
 const int WINDOW_WIDTH = 1024;
 const int WINDOW_HEIGHT = 512;
@@ -10,9 +8,10 @@ const int g = 0x60;
 const int b = 0x0;
 
 SDL_Window* window = NULL;
-SDL_Surface* surface = NULL;
 SDL_Renderer* renderer = NULL;
-bool use_hires = false;
+SDL_Texture* lores_texture = NULL;
+SDL_Texture* hires_texture = NULL;
+SDL_Texture* texture = NULL;
 
 bool init_window(char* filename) {
 	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -32,65 +31,63 @@ bool init_window(char* filename) {
 		return false;
 	}
 
-	surface = SDL_GetWindowSurface(window);
+	hires_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 128, 64);
 
-	clear_screen();
+	if (hires_texture == NULL) {
+		printf("Error creating hires texture: %s\n", SDL_GetError());
+	}
+
+	lores_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 64, 32);
+
+	if (lores_texture == NULL) {
+		printf("Error creating lores texture: %s\n", SDL_GetError());
+	}
 
 	return true;
 }
 
 void close_window() {
+	SDL_DestroyTexture(hires_texture);
+	SDL_DestroyTexture(lores_texture);
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
 }
 
-void clear_screen() {
-	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-	SDL_RenderClear(renderer);
+void clear_window() {
+	SDL_
+void draw_window(bool hires) {
+
+	if (hires)
+		texture = hires_texture;
+	else
+		texture = lores_texture;
+
+	SDL_RenderCopy(renderer, texture, NULL, NULL);
+	SDL_RenderPresent(renderer);
 }
 
-void hires() {
-	use_hires = true;
-	clear_screen();
-}
+void draw_sprite_fragment(unsigned char *I, SDL_Rect box, int xoffset, int yoffset) {
 
-void lores() {
-	use_hires = false;
-	clear_screen();
-}
+	void* pixels;
+	int pitch;
 
-void draw_sprite(unsigned char *I, int xpos, int ypos, int lines) {
-	SDL_Rect box;
+	SDL_LockTexture(texture, &box, &pixels, &pitch);
 
-	for(int y = 0; y < lines; y++) {
+	for(int y = 0; y < box.h; y++) {
 		int x;
 		unsigned char bit;
-		for(x = 0, bit = 0b10000000; x < 8; x++, bit >>= 1) {
-			if (*I & bit) {
-				SDL_SetRenderDrawColor(renderer, r, g, b, 0xff);
+		for(x = 0, bit = 0b10000000 >> xoffset; x < box.w; x++, bit >>= 1) {
+			if (*(I + xoffset + 8 * yoffset) & bit) {
+				((uint32_t*)pixels)[x + (pitch/4)*y] =
+					0xd2691eff;
 			} else {
-				SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-			}
-				
-			if (use_hires) {
-				box.h = 8;
-				box.w = 8;
-				box.x = (xpos + x) * 8;
-				box.y = (ypos + y) * 8;
-				SDL_RenderFillRect(renderer, &box);
-			} else {
-				box.h = 16;
-				box.w = 16;
-				box.x = (xpos + x) * 16; 
-				box.y = (ypos + y) * 16;
-				SDL_RenderFillRect(renderer, &box);
+				((uint32_t*)pixels)[x + (pitch/4)*y] = 0;
 			}
 		}
 
 		I++;
 	}
 
-	SDL_RenderPresent(renderer);
-	SDL_UpdateWindowSurface(window);
+	SDL_UnlockTexture(texture); 
 }
