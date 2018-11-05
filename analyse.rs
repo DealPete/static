@@ -27,6 +27,9 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
 
             let (offsets, labels, indeterminate) = inst.successors(offset);
 
+            let branching = offsets.len() > 1
+                || labels.len() > 0;
+
             for label in labels {
                 graph.add_label(label);
             }
@@ -35,7 +38,6 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
                 indeterminates.push(offset);
             }
             
-            let branching = offsets.len() > 1;
             let mut new_offsets = graph.
                 insert_offsets(offset, offsets, branching);
             unexplored.append(&mut new_offsets);

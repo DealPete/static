@@ -268,7 +268,7 @@ fn jump(offset: usize, op1: Operand, op2: Option<Operand>) -> String {
     match op1 {
         Operand::Address(address) => {
             if address as usize == offset + 0x200 {
-                "while(true) process_input();\n".into()
+                "return 0;\n".into()
             } else {
                 format!("goto l{:x};\n", address)
             }
@@ -311,7 +311,7 @@ fn draw(op1: Operand, op2: Operand, op3: Operand) -> String {
         _ => panic!("invalid operand for DRW Vx, Vy, ?.")
     };
 
-    format!("draw_sprite(memory + I, V[{}], V[{}], {});\n",
+    format!("V[0xf] = draw_sprite(memory + I, V[{}], V[{}], {});\n",
         xpos, ypos, lines)
 }
 
@@ -326,8 +326,7 @@ fn random(op1: Operand, op2: Operand) -> String {
         _ => panic!("invalid operand for RND Vx, ?.")
     };
 
-    format!("V[{}] = (random_int32() % 256) & {};\n",
-        target, mask)
+    format!("V[{}] = random_int8() & {:#b};\n", target, mask)
 }
 
 /*

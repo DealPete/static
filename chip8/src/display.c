@@ -25,7 +25,7 @@ bool init_window(char* filename) {
 		return false;
 	}
 
-	renderer = SDL_CreateRenderer(window, -1, 0);
+	renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
 	if (renderer == NULL) {
 		printf("Error creating SDL renderer: %s\n", SDL_GetError());
 		return false;
@@ -35,12 +35,14 @@ bool init_window(char* filename) {
 
 	if (hires_texture == NULL) {
 		printf("Error creating hires texture: %s\n", SDL_GetError());
+		return false;
 	}
 
 	lores_texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 64, 32);
 
 	if (lores_texture == NULL) {
 		printf("Error creating lores texture: %s\n", SDL_GetError());
+		return false;
 	}
 
 	return true;
@@ -54,43 +56,31 @@ void close_window() {
 	SDL_Quit();
 }
 
-void clear_window() {
-	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-	SDL_RenderClear(renderer);
-}
+void draw_window(bool* buffer, bool hires, int screen_width, int screen_height) {
 
-void draw_window(bool hires) {
+	void* pixels;
+	int pitch;
 
 	if (hires)
 		texture = hires_texture;
 	else
 		texture = lores_texture;
 
-	SDL_RenderCopy(renderer, texture, NULL, NULL);
-	SDL_RenderPresent(renderer);
-}
+	SDL_LockTexture(texture, NULL, &pixels, &pitch);
 
-void draw_sprite_fragment(unsigned char *I, SDL_Rect box, int xoffset, int yoffset) {
-
-	void* pixels;
-	int pitch;
-
-	SDL_LockTexture(texture, &box, &pixels, &pitch);
-
-	for(int y = 0; y < box.h; y++) {
-		int x;
-		unsigned char bit;
-		for(x = 0, bit = 0b10000000 >> xoffset; x < box.w; x++, bit >>= 1) {
-			if (*(I + xoffset + 8 * yoffset) & bit) {
+	for(int x = 0; x < screen_width; x++) {
+		for(int y = 0; y < screen_height; y++) {
+			if (buffer[x + y * screen_width]) {
 				((uint32_t*)pixels)[x + (pitch/4)*y] =
 					0xd2691eff;
 			} else {
 				((uint32_t*)pixels)[x + (pitch/4)*y] = 0;
 			}
 		}
-
-		I++;
 	}
 
 	SDL_UnlockTexture(texture); 
+
+	SDL_RenderCopy(renderer, texture, NULL, NULL);
+	SDL_RenderPresent(renderer);
 }

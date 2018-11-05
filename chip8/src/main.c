@@ -12,18 +12,11 @@ int main(int argc, char* args[]) {
 
 	SDL_Thread* thread = SDL_CreateThread(run_game, "GameCode", NULL);
 
-	int last_update = SDL_GetTicks();
-	int current_time = last_update;
-
 	while(!check_for_quit()) {
-		current_time = SDL_GetTicks();
-
-		if (current_time - last_update < 100) {
-			draw_screen();
-			last_update = SDL_GetTicks();
-		}
+		check_for_input();
+		draw_screen();
 	}
 
 	cleanup();
-	exit(0);
+	return 0;
 }

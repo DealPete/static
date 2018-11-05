@@ -6,5 +6,5 @@
 bool init_window(char* filename);
 void close_window();
 void clear_window();
-void draw_window(bool hires);
-void draw_sprite_fragment(unsigned char* I, SDL_Rect box, int xoffset, int yoffset);
+void draw_window(bool* buffer, bool hires, int screen_width,
+	int screen_height);
