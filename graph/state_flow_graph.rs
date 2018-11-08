@@ -87,7 +87,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
             .collect()
     }
 
-    pub fn get_instructions_at_node(&self, node: usize) -> &[usize] {
+    pub fn get_instructions_at(&self, node: usize) -> &[usize] {
         &self.nodes[node].insts
     }
 

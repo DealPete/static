@@ -25,7 +25,7 @@ impl Chip8Analyzer {
         let mut coverage_sets: HashMap<usize, HashSet<Operand>> = HashMap::new();
         let mut live_nodes = Vec::new();
         let mut coverage: HashSet<Operand> = [operand].iter().cloned().collect();
-        let mut insts = graph.get_instructions_at_node(current_node);
+        let mut insts = graph.get_instructions_at(current_node);
         let mut index = insts.iter().position(|&inst| inst == offset).unwrap();
         let mut slice = HashSet::new();
 
@@ -54,7 +54,7 @@ impl Chip8Analyzer {
                         coverage = coverage_sets.get(&live_node)
                             .expect("expected coverage set").clone();
                         current_node = live_node;
-                        insts = graph.get_instructions_at_node(current_node);
+                        insts = graph.get_instructions_at(current_node);
                         index = insts.len() - 1;
                     }
                 }
@@ -170,7 +170,7 @@ fn simulate_slice<'a>(file_buffer: &'a [u8], flow_graph: &FlowGraph<Instruction>
         }*/
         let node = graph.get_node_at(Interpreter::next_inst_offset(&state))
             .expect("Couldn't find node");
-        let insts: Vec<usize> = graph.get_instructions_at_node(node).iter().cloned().collect();
+        let insts: Vec<usize> = graph.get_instructions_at(node).iter().cloned().collect();
         let mut index = 0;
 
         loop {
@@ -203,7 +203,7 @@ fn simulate_slice<'a>(file_buffer: &'a [u8], flow_graph: &FlowGraph<Instruction>
                 if index == insts.len() - 1 {
                     for adjacent_node in graph.get_next_nodes(node) {
                         let mut new_state = state.clone();
-                        let new_offset = graph.initial_instruction(adjacent_node).unwrap();
+                        let new_offset = graph.initial_instruction(adjacent_node)?;
                         new_state.pc = new_offset as u16 + 0x200;
                         graph.add_state(new_state, adjacent_node);
                     }

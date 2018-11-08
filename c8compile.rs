@@ -5,11 +5,12 @@ pub mod chip8;
 mod c8analyzer;
 
 use chip8::arch::*;
-use graph::flow_graph::FlowGraph;
+use graph::flow_graph::{FlowGraph, CallGraph};
 
-static PRELUDE: &str =
+static PROGRAM: &str =
 "#include \"api.h\"
 #include <stdint.h>
+#include <stdlib.h>
 
 unsigned char memory[4096] = {
     // numerals
@@ -97,8 +98,10 @@ char* get_filename() {
     return \"{filename}\";
 }
 
-int run_game(void* data) {
-
+{functions}int run_game(void* data) {
+{main}
+\treturn 0;
+}
 ";
 
 static MAKEFILE: &str =
@@ -144,14 +147,23 @@ fn main() {
                 let mut file = File::create("code.c")
                     .expect("Couldn't create output file.");
 
-                let source = source_string(graph, stem, buffer);
+                let call_graph = match graph.construct_call_graph() {
+                    Err(err) => panic!(err),
+                    Ok(call_graph) => call_graph
+                };
+
+                let source = match source_string(graph, call_graph, stem, buffer) {
+                    Err(err) => panic!(err),
+                    Ok(source) => source
+                };
+                
                 file.write_all(source.as_bytes())
                     .expect("Couldn't write output file.");
 
                 let mut makefile = File::create("makefile")
                     .expect("Couldn't create makefile.");
 
-                makefile.write_all(MAKEFILE.replace("{}", stem).as_bytes())
+                makefile.write_all(MAKEFILE.as_bytes())
                     .expect("Couldn't write makefile.");
             },
             Err(error) => println!("{}", error)
@@ -161,22 +173,51 @@ fn main() {
     }
 }
 
-fn source_string(graph: FlowGraph<Instruction>, file_stem: &str, data: Vec<u8>) -> String {
+fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_stem: &str, data: Vec<u8>) -> Result<String, String> {
     let mut data_string = String::new();
 
     for byte in data {
         data_string.push_str(format!("0x{:x}, ", byte).as_str());
     }
 
-    let mut output = PRELUDE.replace("{program}", &data_string)
-                            .replace("{filename}", file_stem);
+    /*
+    let mut headers = String::new();
 
+    for function in call_graph.iter().skip(1) {
+        let first_offset = graph.initial_instruction(function[0])?.unwrap();
+        headers.push_str(format!(
+            "void f{:x}();\n", first_offset + 0x200).as_str());
+    }*/
+
+    let mut functions = String::new();
+    let mut main = String::new();
+
+    while let Some(function) = call_graph.pop() {
+        if call_graph.len() > 0 {
+            let address = graph.initial_instruction(function[0])?.unwrap() + 0x200;
+            functions.push_str(format!("void f{:x}() {{\n", address).as_str());
+            functions.push_str(compile_function(&graph, function)?.as_str());
+            functions.push_str("}\n\n");
+        } else {
+            main = compile_function(&graph, function)?;
+        }
+    }
+
+    Ok(PROGRAM.replace("{program}", &data_string)
+              .replace("{filename}", file_stem)
+              //.replace("{headers}", &headers)
+              .replace("{functions}", &functions)
+              .replace("{main}", &main))
+}
+
+fn compile_function(graph: &FlowGraph<Instruction>, function: Vec<usize>) -> Result<String, String> {
+    let mut output = String::new();
     let mut node_outputs = Vec::new();
 
-    for index in 1..graph.node_count() {
-        let offset = graph.initial_instruction(index)
-            .expect("no instruction at node.");
-        node_outputs.push((offset, compile_node(&graph, index)));
+    for node in function {
+        if let Some(offset) = graph.initial_instruction(node)? {
+            node_outputs.push((offset, compile_node(&graph, node)));
+        }
     }
 
     node_outputs.sort_by_key(|&(key, _)| key);
@@ -185,18 +226,16 @@ fn source_string(graph: FlowGraph<Instruction>, file_stem: &str, data: Vec<u8>) 
         output.push_str(node_output.as_str());
     }
 
-    output.push_str("\treturn 0;\n}\n");
-
-    output
+    Ok(output)
 }
 
 fn compile_node(graph: &FlowGraph<Instruction>, node: usize) -> String {
-    let node_address = graph.initial_instruction(node)
+    let node_address = graph.initial_instruction(node).unwrap()
         .expect(format!("no instruction at node {}", node).as_str()) + 0x200;
 
-    let mut output = format!("l{:x}:", node_address);
+    let mut output = format!("\nl{:x}:", node_address);
     
-    for offset in graph.get_instructions_at_node(node) {
+    for offset in graph.get_instructions_at(node) {
         let inst = graph.get_inst(*offset)
             .expect(format!("no instruction at offset {:x}", offset).as_str());
 
@@ -207,17 +246,21 @@ fn compile_node(graph: &FlowGraph<Instruction>, node: usize) -> String {
             Mnemonic::CLS => "clear_screen();\n".into(),
             Mnemonic::LD => load(inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::ADD => add(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SNE => split(false, *offset, inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SE => split(true, *offset, inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SNE => skip(false, *offset, inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SE => skip(true, *offset, inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::JP => jump(*offset, inst.unpack_op1(), inst.op2),
+            Mnemonic::SKP => skip_key(true, *offset, inst.unpack_op1()),
+            Mnemonic::SKNP => skip_key(false, *offset, inst.unpack_op1()),
             Mnemonic::DRW => draw(inst.unpack_op1(), inst.unpack_op2(), inst.unpack_op3()),
             Mnemonic::RND => random(inst.unpack_op1(), inst.unpack_op2()),
-            //Mnemonic::CALL => call(*offset, inst.unpack_op1()),
+            Mnemonic::CALL => call(inst.unpack_op1()),
+            Mnemonic::RET => "return;\n".into(),
+            Mnemonic::EXIT => "exit(0);\n".into(),
+            Mnemonic::SCL => "scroll_left();\n".into(),
+            Mnemonic::SCR => "scroll_right();\n".into(),
             _ => panic!("unsupported mnemonic")
         }.as_str());
     }
-
-    output.push_str("\n");
 
     output
 }
@@ -277,7 +320,7 @@ fn jump(offset: usize, op1: Operand, op2: Option<Operand>) -> String {
     }
 }
 
-fn split(equal: bool, offset: usize, op1: Operand, op2: Operand) -> String {
+fn skip(equal: bool, offset: usize, op1: Operand, op2: Operand) -> String {
     let address = offset + 0x200;
     let comparison = if equal { "==" } else { "!=" };
 
@@ -291,7 +334,19 @@ fn split(equal: bool, offset: usize, op1: Operand, op2: Operand) -> String {
                 x, comparison, y, address + 4, address + 2),
             _ => panic!("invalid operand for SE")
         },
-        _ => panic!("invalid operand for SE")
+        _ => panic!("invalid operand for S(N)E")
+    }
+}
+
+fn skip_key(equal: bool, offset: usize, op1: Operand) -> String {
+    let address = offset + 0x200;
+    let comparison = if equal { "" } else { "!" };
+
+    match op1 {
+        Operand::V(x) => format!(
+            "if ({}key_pressed(V[{}])) goto l{:x}; else goto l{:x};\n",
+            comparison, x, address + 4, address + 2),
+        _ => panic!("invalid operand for SK(N)P")
     }
 }
 
@@ -329,17 +384,11 @@ fn random(op1: Operand, op2: Operand) -> String {
     format!("V[{}] = random_int8() & {:#b};\n", target, mask)
 }
 
-/*
-fn call(offset: usize, op1: Operand) -> String {
-    match op1 {
-        Operand::Address(target) =>
-            format!("Stack[SP++] = {};\n\tgoto l{:x};\n",
-                offset + 0x200, target),
-        _ => panic!("invalid operand")
+fn call(op: Operand) -> String {
+    let target = match op {
+        Operand::Address(address) => address,
+        _ => panic!("Invalid operand for CALL ?.")
+    };
 
-    }
+    format!("f{:x}();\n", target)
 }
-
-fn ret() -> String {
-    format!("
-*/

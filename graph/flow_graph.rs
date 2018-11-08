@@ -58,7 +58,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
             .collect()
     }
 
-    pub fn get_instructions_at_node(&self, node: usize) -> &[usize] {
+    pub fn get_instructions_at(&self, node: usize) -> &[usize] {
         &self.nodes[node].insts
     }
 
@@ -119,22 +119,19 @@ impl<I: InstructionTrait> FlowGraph<I> {
         self.listing.add_label(offset);
     }
 
-    pub fn initial_instruction(&self, node_index: usize) -> Result<usize, String> {
+    pub fn initial_instruction(&self, node_index: usize) -> Result<Option<usize>, String> {
         if node_index >= self.nodes.len() {
             Err("Node doesn't exist.".into())
         } else {
-            match self.nodes[node_index].insts.first() {
-                None => Err("Node has no instructions".into()),
-                Some(offset) => Ok(*offset)
-            }
+            Ok(self.nodes[node_index].insts.first().cloned())
         }
     }
 
-    pub fn final_instruction(&self, node_index: usize) -> Result<usize, String> {
+    pub fn final_instruction(&self, node_index: usize) -> Result<Option<usize>, String> {
         if node_index >= self.nodes.len() {
-            Err(String::from("Node doesn't exist."))
+            Err("Node doesn't exist.".into())
         } else {
-            Ok(*self.nodes[node_index].insts.last().unwrap())
+            Ok(self.nodes[node_index].insts.last().cloned())
         }
     }
         
@@ -226,7 +223,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
         let mut output = String::from("=== Flow Graph ===\n\n");
         for i in 1..self.nodes.len() {
             output.push_str(format!("=== Node {} [{:x}] ===", i,
-                self.initial_instruction(i).unwrap()).as_str());
+                self.initial_instruction(i).unwrap().unwrap()).as_str());
             let ref node = self.nodes[i];
             let mut has_instructions = false;
             for inst in node.insts.iter() {
@@ -256,6 +253,59 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
 
         println!("{}", output)
+    }
+
+    pub fn construct_call_graph(&self) -> Result<CallGraph, String> {
+        let mut call_graph = CallGraph::new();
+        let mut mapped_functions = HashSet::new();
+        let mut live_functions = vec!(0);
+
+        while let Some(node) = live_functions.pop() {
+            let mut current_function_nodes = vec!(node);
+            let mut live_nodes = vec!(node);
+
+            while let Some(live_node) = live_nodes.pop() {
+                if let Some(final_offset) = self.final_instruction(live_node)? {
+                    let final_instruction = self.get_inst(final_offset).unwrap();
+
+                    if final_instruction.is_return() {
+                        continue
+                    }
+
+                    if final_instruction.is_call() {
+                        let next_instruction_offset =
+                            final_offset +
+                            final_instruction.length();
+
+                        for next_node in self.get_next_nodes(live_node) {
+                            let target = self.initial_instruction(next_node).unwrap().unwrap();
+                            if target == next_instruction_offset {
+                                if !current_function_nodes.contains(&next_node) {
+                                    live_nodes.push(next_node);
+                                    current_function_nodes.push(next_node);
+                                }
+                            } else if !mapped_functions.contains(&next_node) {
+                                live_functions.push(next_node);
+                                mapped_functions.insert(next_node);
+                            }
+                        }
+
+                        continue
+                    }
+                }
+                    
+                for target in self.get_next_nodes(live_node) {
+                    if !current_function_nodes.contains(&target) {
+                        live_nodes.push(target);
+                        current_function_nodes.push(target);
+                    }
+                }
+            }
+
+            call_graph.push(current_function_nodes);
+        }
+
+        Ok(call_graph)
     }
 }
 
@@ -307,7 +357,7 @@ impl<I: InstructionTrait> fmt::Display for FlowGraph<I> {
         let mut output = String::from("=== Flow Graph ===\n\n");
         for i in 1..self.nodes.len() {
             output.push_str(format!("=== Node {} [{:x}] ===\n", i,
-                self.initial_instruction(i).unwrap()).as_str());
+                self.initial_instruction(i).unwrap().unwrap()).as_str());
             let ref node = self.nodes[i];
             for inst in node.insts.iter() {
                 output.push_str(
@@ -342,7 +392,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
     pub fn from_flow_graph(graph: &FlowGraph<I>, state: S) -> StateFlowGraph<I, S> {
         let mut new_graph = StateFlowGraph::from_listing(graph.listing());
         for index in 0..graph.nodes.len() {
-            new_graph.add_node_with_insts(graph.get_instructions_at_node(index));
+            new_graph.add_node_with_insts(graph.get_instructions_at(index));
         }
         for edge in graph.edges.iter() {
             new_graph.add_edge(edge.get_from(), edge.get_to());
@@ -354,3 +404,5 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         new_graph
     }
 }
+
+pub type CallGraph = Vec<Vec<usize>>;

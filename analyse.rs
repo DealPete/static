@@ -79,14 +79,14 @@ fn update_return_statement_targets<I: InstructionTrait>(graph: &mut FlowGraph<I>
     let mut new_edges = Vec::new();
 
     while let Some(node) = live_nodes.pop() {
-        let final_instruction_offset = graph.final_instruction(node).unwrap();
+        let final_instruction_offset = graph.final_instruction(node).unwrap().unwrap();
         let final_instruction =
             graph.get_inst(final_instruction_offset).unwrap();
 
         if final_instruction.is_return() {
             for source in reaching_sets.get(&node).unwrap() {
                 let source_final_inst =
-                    graph.final_instruction(*source).unwrap();
+                    graph.final_instruction(*source).unwrap().unwrap();
                 let target_offset = source_final_inst +
                     graph.get_inst(source_final_inst).unwrap().length();
                 let target_node = graph.get_node_at(target_offset).unwrap();
@@ -96,7 +96,7 @@ fn update_return_statement_targets<I: InstructionTrait>(graph: &mut FlowGraph<I>
 
         for target in graph.get_next_nodes(node) {
             let calls = if final_instruction.is_call() &&
-                (graph.initial_instruction(target).unwrap()
+                (graph.initial_instruction(target).unwrap().unwrap()
                 != final_instruction_offset
                 + final_instruction.length()) {
                 [node].iter().cloned().collect()

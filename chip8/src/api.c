@@ -13,7 +13,7 @@ SDL_cond* key_ready = NULL;
 bool buffer[8192];
 int screen_width;
 int screen_height;
-int last_key;
+int8_t last_key;
 bool use_hires;
 bool quitting;
 
@@ -101,6 +101,10 @@ int8_t wait_for_keypress() {
 	return key;
 }
 
+bool key_pressed(int8_t key) {
+	return key == last_key;
+}
+
 int random_int8() {
 	return randombytes_random() % 256;
 }
@@ -113,75 +117,25 @@ void draw_screen() {
 	SDL_UnlockMutex(buffer_lock);
 }
 
-bool draw_sprite_fragment(unsigned char *I, SDL_Rect box, int xoffset, int yoffset) {
-	bool pixel_erased = false;
-
-	for(int y = 0; y < box.h; y++) {
-		int x;
-		unsigned char bit;
-		for(x = 0, bit = 0b10000000 >> xoffset; x < box.w; x++, bit >>= 1) {
-			int screen_position = x + box.x + screen_width*(y + box.y);
-			int buffer_value = (*(I + yoffset) & bit) > 0;
-
-			if (buffer[screen_position] && buffer_value)
-				pixel_erased = true;
-
-			buffer[screen_position] ^= buffer_value;
-		}
-
-		I++;
-	}
-
-	return pixel_erased;
-}
-
-int8_t draw_sprite(unsigned char *I, int xpos, int ypos, int lines) {
+int8_t draw_sprite(unsigned char *I, int8_t xpos, int8_t ypos, int8_t lines) {
 	SDL_LockMutex(buffer_lock);
 
 	bool pixel_erased = false;
-	SDL_Rect box;
-	box.x = xpos;
-	box.y = ypos;
 
-	if (xpos + 8 < screen_width && ypos + lines < screen_height) {
-		box.w = 8;
-		box.h = lines;
-		pixel_erased = draw_sprite_fragment(I, box, 0, 0);
+	for(int y = 0; y < lines; y++) {
+		int8_t x;
+		unsigned char bit;
+		for(x = 0, bit = 0b10000000; x < 8; x++, bit >>= 1) {
+			int buffer_index = ((uint8_t)(x + xpos) % screen_width) + screen_width*((uint8_t)(y + ypos) % screen_height);
+			int buffer_value = (*I & bit) > 0;
 
-	} else if (xpos + 8 < screen_width) {
-		box.w = 8;
-		box.h = screen_height - ypos;
-		pixel_erased = draw_sprite_fragment(I, box, 0, 0);
+			if (buffer[buffer_index] && buffer_value)
+				pixel_erased = true;
 
-		box.y = 0;
-		box.h = lines + ypos - screen_height;
-		pixel_erased |= draw_sprite_fragment(I, box, 0, screen_height - ypos);
+			buffer[buffer_index] ^= buffer_value;
+		}
 
-	} else if (ypos + lines < screen_height) {
-		box.w = screen_width - xpos;
-		box.h = lines;
-		pixel_erased = draw_sprite_fragment(I, box, 0, 0);
-
-		box.x = 0;
-		box.w = 8 + xpos - screen_width;
-		pixel_erased |= draw_sprite_fragment(I, box, screen_width - xpos, 0);
-	
-	} else {
-		box.w = screen_width - xpos;
-		box.h = screen_height - ypos;
-		pixel_erased = draw_sprite_fragment(I, box, 0, 0);
-
-		box.y = 0;
-		box.h = lines + ypos - screen_height;
-		pixel_erased |= draw_sprite_fragment(I, box, 0, screen_height - ypos);
-
-		box.x = 0;
-		box.w = 8 + xpos - screen_width;
-		pixel_erased |= draw_sprite_fragment(I, box, screen_width - xpos, screen_height - ypos);
-
-		box.y = ypos;
-		box.h = screen_height - ypos;
-		pixel_erased |= draw_sprite_fragment(I, box, screen_width - xpos, 0);
+		I++;
 	}
 
 	SDL_UnlockMutex(buffer_lock);
