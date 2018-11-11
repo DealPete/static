@@ -1,3 +1,3 @@
 #include <stdint.h>
 
-int8_t process_input();
+uint8_t process_input();

@@ -4,7 +4,7 @@ pub fn recursive_descent<I, A>(file_buffer: &Vec<u8>, architecture: A, entry_off
     where I: InstructionTrait,
           A: Architecture<I>
 {
-    let mut listing = Listing::new(entry_offset);
+    let mut listing = Listing::with_entry(entry_offset);
 
     let mut unexplored = Vec::new();
     unexplored.push(entry_offset);
@@ -19,10 +19,12 @@ pub fn recursive_descent<I, A>(file_buffer: &Vec<u8>, architecture: A, entry_off
                 }
             };
 
-            let (addresses, labels, indeterminate) = inst.successors(offset);
+            let (offsets, labels, indeterminate) = inst.successors(offset);
 
-            for address in addresses {
-                unexplored.push(address);
+            for offset in offsets {
+                if offset < file_buffer.len() {
+                    unexplored.push(offset);
+                }
             }
 
             for label in labels {

@@ -10,7 +10,8 @@ int main(int argc, char* args[]) {
 		return -1;
 	}
 
-	SDL_Thread* thread = SDL_CreateThread(run_game, "GameCode", NULL);
+	SDL_CreateThread(run_game, "GameCode", NULL);
+	SDL_CreateThread(delay_timer, "DelayTimer", NULL);
 
 	while(!check_for_quit()) {
 		check_for_input();

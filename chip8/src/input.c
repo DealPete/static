@@ -5,11 +5,11 @@
 
 SDL_Event e;
 
-int8_t process_input(bool* quitting) {
+uint8_t process_input(bool* quitting) {
 	while (SDL_PollEvent(&e)) {
 		if (e.type == SDL_QUIT) {
 			*quitting = true;
-			return -1;
+			return 0xff;
 		}
 
 		if (e.type == SDL_KEYDOWN) {
@@ -50,5 +50,5 @@ int8_t process_input(bool* quitting) {
 		}
 	}
 
-	return -1;
+	return 0xff;
 }

@@ -2,6 +2,8 @@ mod recur;
 pub mod defs;
 pub mod chip8;
 
+use defs::Architecture;
+
 fn main() {
     use std::env;
     use std::io::Read;
@@ -25,7 +27,7 @@ fn main() {
             start_offset
         );
 
-        listing.print_instructions();
+        chip8::arch::Chip8::print_listing(&listing);
     } else {
 		println!("usage: dis <file-to-disassemble> [<start-offset>]");
     }

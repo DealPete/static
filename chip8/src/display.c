@@ -1,3 +1,4 @@
+#include "api.h"
 #include "display.h"
 
 const int WINDOW_WIDTH = 1024;
@@ -14,7 +15,7 @@ SDL_Texture* hires_texture = NULL;
 SDL_Texture* texture = NULL;
 
 bool init_window(char* filename) {
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+	if (SDL_Init(SDL_INIT_EVERYTHING) < 0) {
 		printf("Error initializing SDL video: %s\n", SDL_GetError());
 		return false;
 	}
@@ -47,6 +48,7 @@ bool init_window(char* filename) {
 
 	return true;
 }
+
 
 void close_window() {
 	SDL_DestroyTexture(hires_texture);

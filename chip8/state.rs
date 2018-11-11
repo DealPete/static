@@ -65,7 +65,8 @@ impl<'a> State<'a> {
                 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf]),
             Operand::DelayTimer => self.delay_timer.clone(),
             Operand::SoundTimer => self.sound_timer.clone(),
-            Operand::Numeral(_) => Byte::Undefined,
+            Operand::Numeral(_) | Operand::LargeNumeral(_) =>
+                Byte::Undefined,
             _ => panic!("unimplemented byte type.")
         }
     }

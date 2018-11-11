@@ -30,6 +30,9 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
             let branching = offsets.len() > 1
                 || labels.len() > 0;
 
+            let valid_offsets = offsets.into_iter().filter(|offset|
+                *offset < file_buffer.len()).collect();
+
             for label in labels {
                 graph.add_label(label);
             }
@@ -39,7 +42,7 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
             }
             
             let mut new_offsets = graph.
-                insert_offsets(offset, offsets, branching);
+                insert_offsets(offset, valid_offsets, branching);
             unexplored.append(&mut new_offsets);
         }
 
@@ -89,8 +92,9 @@ fn update_return_statement_targets<I: InstructionTrait>(graph: &mut FlowGraph<I>
                     graph.final_instruction(*source).unwrap().unwrap();
                 let target_offset = source_final_inst +
                     graph.get_inst(source_final_inst).unwrap().length();
-                let target_node = graph.get_node_at(target_offset).unwrap();
-                new_edges.push((node, target_node));
+                if let Some(target_node) = graph.get_node_at(target_offset) {
+                    new_edges.push((node, target_node));
+                }
             }
         }
 

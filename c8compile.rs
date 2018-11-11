@@ -10,7 +10,9 @@ use graph::flow_graph::{FlowGraph, CallGraph};
 static PROGRAM: &str =
 "#include \"api.h\"
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 unsigned char memory[4096] = {
     // numerals
@@ -88,16 +90,17 @@ unsigned char memory[4096] = {
     {program}
 };
 
-int8_t V[16] = {
+uint8_t V[16] = {
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
 
-int16_t I = 0;
+uint16_t I = 0;
 
 char* get_filename() {
     return \"{filename}\";
 }
 
+{headers}
 {functions}int run_game(void* data) {
 {main}
 \treturn 0;
@@ -180,14 +183,13 @@ fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_
         data_string.push_str(format!("0x{:x}, ", byte).as_str());
     }
 
-    /*
     let mut headers = String::new();
 
     for function in call_graph.iter().skip(1) {
         let first_offset = graph.initial_instruction(function[0])?.unwrap();
         headers.push_str(format!(
             "void f{:x}();\n", first_offset + 0x200).as_str());
-    }*/
+    }
 
     let mut functions = String::new();
     let mut main = String::new();
@@ -196,27 +198,27 @@ fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_
         if call_graph.len() > 0 {
             let address = graph.initial_instruction(function[0])?.unwrap() + 0x200;
             functions.push_str(format!("void f{:x}() {{\n", address).as_str());
-            functions.push_str(compile_function(&graph, function)?.as_str());
+            functions.push_str(compile_function(&graph, function, false)?.as_str());
             functions.push_str("}\n\n");
         } else {
-            main = compile_function(&graph, function)?;
+            main = compile_function(&graph, function, true)?;
         }
     }
 
     Ok(PROGRAM.replace("{program}", &data_string)
               .replace("{filename}", file_stem)
-              //.replace("{headers}", &headers)
+              .replace("{headers}", &headers)
               .replace("{functions}", &functions)
               .replace("{main}", &main))
 }
 
-fn compile_function(graph: &FlowGraph<Instruction>, function: Vec<usize>) -> Result<String, String> {
+fn compile_function(graph: &FlowGraph<Instruction>, function: Vec<usize>, main: bool) -> Result<String, String> {
     let mut output = String::new();
     let mut node_outputs = Vec::new();
 
     for node in function {
         if let Some(offset) = graph.initial_instruction(node)? {
-            node_outputs.push((offset, compile_node(&graph, node)));
+            node_outputs.push((offset, compile_node(&graph, node, main)));
         }
     }
 
@@ -229,11 +231,10 @@ fn compile_function(graph: &FlowGraph<Instruction>, function: Vec<usize>) -> Res
     Ok(output)
 }
 
-fn compile_node(graph: &FlowGraph<Instruction>, node: usize) -> String {
+fn compile_node(graph: &FlowGraph<Instruction>, node: usize, main: bool) -> String {
     let node_address = graph.initial_instruction(node).unwrap()
         .expect(format!("no instruction at node {}", node).as_str()) + 0x200;
-
-    let mut output = format!("\nl{:x}:", node_address);
+let mut output = format!("\nl{:x}:\n", node_address);
     
     for offset in graph.get_instructions_at(node) {
         let inst = graph.get_inst(*offset)
@@ -244,70 +245,95 @@ fn compile_node(graph: &FlowGraph<Instruction>, node: usize) -> String {
             Mnemonic::LOW => "lores();\n".into(),
             Mnemonic::HIGH => "hires();\n".into(),
             Mnemonic::CLS => "clear_screen();\n".into(),
+            Mnemonic::AND => and(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::OR => or(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::XOR => xor(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SHL => shl(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SHR => shr(inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::LD => load(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::LDPTR => load_ptr(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::LDBCD => format!("load_bcd(memory + I, {});\n",
+                encode_op(inst.unpack_op1())),
             Mnemonic::ADD => add(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SUB => sub(inst.unpack_op1(), inst.unpack_op2()),
+            Mnemonic::SUBN => subn(inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::SNE => skip(false, *offset, inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::SE => skip(true, *offset, inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::JP => jump(*offset, inst.unpack_op1(), inst.op2),
+            Mnemonic::JP => jump(graph, *offset, inst.unpack_op1(), inst.op2),
             Mnemonic::SKP => skip_key(true, *offset, inst.unpack_op1()),
             Mnemonic::SKNP => skip_key(false, *offset, inst.unpack_op1()),
             Mnemonic::DRW => draw(inst.unpack_op1(), inst.unpack_op2(), inst.unpack_op3()),
             Mnemonic::RND => random(inst.unpack_op1(), inst.unpack_op2()),
             Mnemonic::CALL => call(inst.unpack_op1()),
-            Mnemonic::RET => "return;\n".into(),
+            Mnemonic::RET => if main { "exit(0);\n".into() } else { "return;\n".into() },
             Mnemonic::EXIT => "exit(0);\n".into(),
             Mnemonic::SCL => "scroll_left();\n".into(),
             Mnemonic::SCR => "scroll_right();\n".into(),
-            _ => panic!("unsupported mnemonic")
+            Mnemonic::SCD => format!("scroll_down({});\n", encode_op(inst.unpack_op1())),
         }.as_str());
     }
 
     output
 }
 
-fn load(op1: Operand, op2: Operand) -> String {
-    match op1 {
-        Operand::I => match op2 {
-            Operand::Address(address) =>
-                format!("I = 0x{:x};\n", address),
-            Operand::Numeral(n) =>
-                format!("I = 5 * V[{}];\n", n),
-            Operand::LargeNumeral(n) =>
-                format!("I = 10 * V[{}] + 80;\n", n),
-            _ => panic!("invalid operand for LD I, ?.") 
-        },
-        Operand::V(x) => match op2 {
-            Operand::Byte(byte) =>
-                format!("V[{}] = {};\n", x, byte),
-            Operand::V(y) =>
-                format!("V[{}] = V[{}];\n", x, y),
-            Operand::KeyPress =>
-                format!("V[{}] = wait_for_keypress();\n", x),
-            _ => panic!("invalid operand for LD Vx, ?.")
-        },
-        _ => panic!("invalid operand for LD.")
-    }
-}
-
 fn add(op1: Operand, op2: Operand) -> String {
-    match op1 {
-        Operand::I => match op2 {
-            Operand::V(x) =>
-                format!("I += V[{}];\n", x),
-            _ => panic!("invalid operand")
-        },
-        Operand::V(x) => match op2 {
-            Operand::V(y) =>
-                format!("V[{}] += V[{}];\n", x, y),
-            Operand::Byte(byte) =>
-                format!("V[{}] += {};\n", x, byte),
-            _ => panic!("Invalid operand")
+    if let Operand::V(_) = op1 {
+        if let Operand::V(_) = op2 {
+            let vx = encode_op(op1);
+            let vy = encode_op(op2);
+            return format!(
+                "V[0xf] = {} + {} < {} ? 0 : 1;\n\t {} += {};\n",
+                vx, vy, vx, vx, vy);
         }
-        _ => panic!("Invalid operand")
     }
+
+    format!("{} += {};\n", encode_op(op1), encode_op(op2))
 }
 
-fn jump(offset: usize, op1: Operand, op2: Option<Operand>) -> String {
+fn sub(op1: Operand, op2: Operand) -> String {
+    let vx = encode_op(op1);
+    let vy = encode_op(op2);
+    format!("V[0xf] = {} < {} ? 0 : 1;\n\t{} -= {};\n",
+        vx, vy, vx, vy)
+}
+
+fn subn(op1: Operand, op2: Operand) -> String {
+    let vx = encode_op(op1);
+    let vy = encode_op(op2);
+    format!("V[0xf] = {} < {} ? 0 : 1;\n\t{} = {} - {};\n",
+        vy, vx, vx, vy, vx)
+}
+
+fn shl(op1: Operand, op2: Operand) -> String {
+    let vx = encode_op(op1);
+    let vy = encode_op(op2);
+    format!("V[0xf] = {} & 0x80 ? 1 : 0;\n\t{} = {} << 1;\n",
+        vx, vx, vy)
+}
+
+fn shr(op1: Operand, op2: Operand) -> String {
+    let vx = encode_op(op1);
+    let vy = encode_op(op2);
+    format!("V[0xf] = {} & 0x1 ? 1 : 0;\n\t{} = {} >> 1;\n",
+        vx, vx, vy)
+}
+
+fn and(op1: Operand, op2: Operand) -> String {
+    let lhs = encode_op(op1);
+    format!("{} = {} & {};\n", lhs, lhs, encode_op(op2))
+}
+
+fn or(op1: Operand, op2: Operand) -> String {
+    let lhs = encode_op(op1);
+    format!("{} = {} | {};\n", lhs, lhs, encode_op(op2))
+}
+
+fn xor(op1: Operand, op2: Operand) -> String {
+    let lhs = encode_op(op1);
+    format!("{} = {} ^ {};\n", lhs, lhs, encode_op(op2))
+}
+
+fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option<Operand>) -> String {
     match op1 {
         Operand::Address(address) => {
             if address as usize == offset + 0x200 {
@@ -316,7 +342,55 @@ fn jump(offset: usize, op1: Operand, op2: Option<Operand>) -> String {
                 format!("goto l{:x};\n", address)
             }
         },
-        _ => panic!("Invalid operand")
+        Operand::V(0) => match op2 {
+            Some(Operand::Address(address)) => {
+                let mut output = String::from("switch (V[0]) {\n");
+                let node = graph.get_node_at(offset).unwrap();
+
+                for target in graph.get_next_nodes(node) {
+                    let target_offset = graph.initial_instruction(target)
+                        .unwrap().unwrap();
+                    let v_0 = target_offset + 0x200 - address as usize;
+                    output.push_str(format!("\t\tcase {}:\n\t\tgoto l{:x};\n\n",
+                        v_0, target_offset + 0x200).as_str());
+                }
+
+                output.push_str(format!(
+"\t\tdefault:
+\t\tprintf(\"Error at 0x{:x}. Unexpected value %d for V0.\", V[0]); 
+\t\texit(0);
+\t}}
+",
+                    offset + 0x200).as_str());
+
+                output
+            },
+            _ => panic!("Invalid operand for JMP V0, ?.")
+        },
+        _ => panic!("Invalid operand for JMP.")
+    }
+}
+ 
+fn load(op1: Operand, op2: Operand) -> String {
+    match op1 {
+        Operand::DelayTimer => format!("set_timer({});\n", encode_op(op2)),
+        _ => format!("{} = {};\n", encode_op(op1), encode_op(op2))
+    }
+}
+
+fn load_ptr(op1: Operand, op2: Operand) -> String {
+    if let Operand::Pointer = op1 {
+        match op2 {
+            Operand::V(x) => format!("memcpy(memory + I, V, {});\n\tI += {};\n",
+                x+1, x+1),
+            _ => panic!("Invalid operand for LDPTR [I], ?")
+        }
+    } else {
+        match op1 {
+            Operand::V(x) => format!("memcpy(V, memory + I, {});\n\tI += {};\n",
+                x+1, x+1),
+            _ => panic!("Invalid operand for LDPTR ?, [I]")
+        }
     }
 }
 
@@ -381,7 +455,7 @@ fn random(op1: Operand, op2: Operand) -> String {
         _ => panic!("invalid operand for RND Vx, ?.")
     };
 
-    format!("V[{}] = random_int8() & {:#b};\n", target, mask)
+    format!("V[{}] = random_byte() & {:#b};\n", target, mask)
 }
 
 fn call(op: Operand) -> String {
@@ -391,4 +465,18 @@ fn call(op: Operand) -> String {
     };
 
     format!("f{:x}();\n", target)
+}
+
+fn encode_op(op: Operand) -> String {
+    match op {
+        Operand::Byte(byte) => format!("0x{:x}", byte),
+        Operand::V(x) => format!("V[{}]", x),
+        Operand::I => "I".into(),
+        Operand::Address(address) => format!("0x{:x}", address),
+        Operand::Numeral(n) => format!("5 * V[{}]", n),
+        Operand::LargeNumeral(n) => format!("10 * V[{}] + 80", n),
+        Operand::KeyPress => "wait_for_keypress()".into(),
+        Operand::DelayTimer => "get_timer()".into(),
+        _ => panic!("Invalid operand for op encoding.")
+    }
 }
