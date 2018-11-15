@@ -1,4 +1,4 @@
-use defs::*;
+use defs::main::*;
 use chip8::dis;
 use std::fmt;
 

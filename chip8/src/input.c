@@ -8,8 +8,7 @@ SDL_Event e;
 uint8_t process_input(bool* quitting) {
 	while (SDL_PollEvent(&e)) {
 		if (e.type == SDL_QUIT) {
-			*quitting = true;
-			return 0xff;
+			return INPUT_QUIT;
 		}
 
 		if (e.type == SDL_KEYDOWN) {
@@ -46,9 +45,11 @@ uint8_t process_input(bool* quitting) {
 				return 0xb;
 				case SDLK_v:
 				return 0xf;
+				case SDLK_ESCAPE:
+				return INPUT_RESTART;
 			}
 		}
 	}
 
-	return 0xff;
+	return NO_INPUT;
 }

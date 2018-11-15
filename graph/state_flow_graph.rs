@@ -1,6 +1,6 @@
 //use std::time::{SystemTime, UNIX_EPOCH};
 
-use defs::*;
+use defs::main::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;

@@ -4,7 +4,7 @@ pub mod graph;
 pub mod chip8;
 mod c8analyzer;
 
-use defs::Architecture;
+use defs::main::Architecture;
 
 fn main() {
     use std::env;

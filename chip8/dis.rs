@@ -1,4 +1,4 @@
-use defs::*;
+use defs::main::*;
 use chip8::arch::*;
 
 pub fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, String> {

@@ -1,4 +1,4 @@
-use defs::*;
+use defs::main::*;
 use graph::state_flow_graph::StateFlowGraph;
 
 pub enum LogType {

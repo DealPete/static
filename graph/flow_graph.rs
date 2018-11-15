@@ -1,5 +1,5 @@
 use graph::state_flow_graph::StateFlowGraph;
-use defs::*;
+use defs::main::*;
 use std::fmt;
 use std::collections::HashMap;
 use std::collections::HashSet;

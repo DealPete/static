@@ -14,7 +14,11 @@ static PROGRAM: &str =
 #include <stdlib.h>
 #include <string.h>
 
-unsigned char memory[4096] = {
+unsigned char memory[4096];
+uint8_t V[16];
+uint16_t I;
+
+unsigned char initial_memory[4096] = {
     // numerals
 	0xf0, 0x90, 0x90, 0x90, 0xf0,	// 0
 	0x20, 0x60, 0x20, 0x20, 0x70,	// 1
@@ -90,11 +94,15 @@ unsigned char memory[4096] = {
     {program}
 };
 
-uint8_t V[16] = {
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
+void init_data() {
+    memcpy(memory, initial_memory, 4096);
 
-uint16_t I = 0;
+    for (int i = 0; i < 16; i++) {
+        V[i] = 0;
+    }
+
+    I = 0;
+}
 
 char* get_filename() {
     return \"{filename}\";
@@ -102,6 +110,7 @@ char* get_filename() {
 
 {headers}
 {functions}int run_game(void* data) {
+\tinit_data();
 {main}
 \treturn 0;
 }
@@ -336,11 +345,7 @@ fn xor(op1: Operand, op2: Operand) -> String {
 fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option<Operand>) -> String {
     match op1 {
         Operand::Address(address) => {
-            if address as usize == offset + 0x200 {
-                "return 0;\n".into()
-            } else {
-                format!("goto l{:x};\n", address)
-            }
+            format!("goto l{:x};\n", address)
         },
         Operand::V(0) => match op2 {
             Some(Operand::Address(address)) => {
@@ -373,7 +378,8 @@ fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option
  
 fn load(op1: Operand, op2: Operand) -> String {
     match op1 {
-        Operand::DelayTimer => format!("set_timer({});\n", encode_op(op2)),
+        Operand::DelayTimer => format!("set_delay_timer({});\n", encode_op(op2)),
+        Operand::SoundTimer => format!("set_sound_timer({});\n", encode_op(op2)),
         _ => format!("{} = {};\n", encode_op(op1), encode_op(op2))
     }
 }
@@ -476,7 +482,8 @@ fn encode_op(op: Operand) -> String {
         Operand::Numeral(n) => format!("5 * V[{}]", n),
         Operand::LargeNumeral(n) => format!("10 * V[{}] + 80", n),
         Operand::KeyPress => "wait_for_keypress()".into(),
-        Operand::DelayTimer => "get_timer()".into(),
+        Operand::DelayTimer => "get_delay_timer()".into(),
+        Operand::SoundTimer => "get_sound_timer()".into(),
         _ => panic!("Invalid operand for op encoding.")
     }
 }

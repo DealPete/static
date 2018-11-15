@@ -1,4 +1,4 @@
-use defs::*;
+use defs::main::*;
 use graph::flow_graph::*;
 use std::collections::HashMap;
 use std::collections::HashSet;

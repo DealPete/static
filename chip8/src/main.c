@@ -6,18 +6,27 @@ char* get_filename();
 int run_game(void *data);
 
 int main(int argc, char* args[]) {
+	uint8_t input;
+
 	if (!init(get_filename())) {
 		return -1;
 	}
 
 	SDL_CreateThread(run_game, "GameCode", NULL);
-	SDL_CreateThread(delay_timer, "DelayTimer", NULL);
+	SDL_CreateThread(run_delay_timer, "DelayTimer", NULL);
+	SDL_CreateThread(run_sound_timer, "SoundTimer", NULL);
 
-	while(!check_for_quit()) {
-		check_for_input();
+	while(true) {
+		input = check_for_input();
+
+		if (input == INPUT_QUIT) {
+			cleanup();
+			return 0;
+		}
+
+		//if (input == INPUT_RESTART) {
+
 		draw_screen();
 	}
 
-	cleanup();
-	return 0;
 }

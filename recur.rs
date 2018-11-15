@@ -1,4 +1,4 @@
-use defs::*;
+use defs::main::*;
 
 pub fn recursive_descent<I, A>(file_buffer: &Vec<u8>, architecture: A, entry_offset: usize) -> Listing<I>
     where I: InstructionTrait,

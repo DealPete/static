@@ -2,7 +2,7 @@ mod recur;
 pub mod defs;
 pub mod chip8;
 
-use defs::Architecture;
+use defs::main::*;
 
 fn main() {
     use std::env;

@@ -1,4 +1,5 @@
-use defs::*;
+use defs::main::*;
+use defs::set::*;
 use chip8::arch::*;
 use chip8::state::{State};
 use std::collections::HashSet;

@@ -1,9 +1,9 @@
 pub mod graph;
 pub mod defs;
+pub mod chip8;
 mod exhaust;
-mod chip8;
 
-use defs::Architecture;
+use defs::main::Architecture;
 use chip8::arch::Chip8;
 
 fn main() {

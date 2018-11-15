@@ -1,4 +1,5 @@
-use defs::*;
+use defs::main::*;
+use defs::set::*;
 use graph::state_flow_graph::StateFlowGraph;
 use chip8::sim::Interpreter;
 use chip8::state::State;
