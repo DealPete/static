@@ -16,14 +16,33 @@ pub struct StateFlowGraph<I: InstructionTrait, S: StateTrait<S>> {
 }
 
 impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
-    pub fn new(entry_offset: usize, state: S) -> StateFlowGraph<I, S> {
+    pub fn new() -> StateFlowGraph<I, S> {
+        StateFlowGraph {
+            listing: Listing::new(),
+            nodes: vec!(Node::new()),
+            edges: Vec::new(),
+            states: Vec::new(),
+            inst_map: HashMap::new(),
+            state_map: HashMap::new(),
+            live_states: Vec::new()
+        }
+    }
+
+    pub fn with_entry(entry_offset: usize, state: S ) -> StateFlowGraph<I, S> {
         StateFlowGraph {
             listing: Listing::with_entry(entry_offset),
-            nodes: vec!(Node::from_state(entry_offset, 0)),
-            edges: Vec::new(),
+            nodes: vec!(Node {
+                outbound_edges: [0].iter().cloned().collect(),
+                .. Node::new()
+            }, Node {
+                insts: vec!(entry_offset),
+                inbound_edges: [0].iter().cloned().collect(),
+                .. Node::new()
+            }),
+            edges: vec!(Edge::new(0, 1)),
             states: vec!(state),
-            inst_map: [(entry_offset, 0)].iter().cloned().collect(),
-            state_map: [(0, 0)].iter().cloned().collect(),
+            inst_map: [(entry_offset, 1)].iter().cloned().collect(),
+            state_map: [(0, 1)].iter().cloned().collect(),
             live_states: vec!(0)
         }
     }
@@ -38,6 +57,11 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
             state_map: HashMap::new(),
             live_states: Vec::new()
         }
+    }
+
+    pub fn add_node(&mut self) -> usize {
+        self.nodes.push(Node::new());
+        self.nodes.len() - 1;
     }
 
     pub fn add_node_at(&mut self, offset: usize) -> usize {

@@ -1,4 +1,5 @@
-use defs::*;
+use defs::main::*;
+use defs::set::*;
 use x86::state::*;
 use x86::arch::*;
 use std::collections::HashSet;

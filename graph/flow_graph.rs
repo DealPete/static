@@ -111,7 +111,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
     
-    pub fn get_inst(&self, offset: usize) -> Option<&I> {
+    pub fn get_inst(&self, offset: usize) -> Option<&Meta<I>> {
         self.listing.instructions.get(&offset)
     }
 
@@ -189,7 +189,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
 
-    pub fn insert_offsets(&mut self, source: usize, targets: Vec<usize>, branching: bool) -> Vec<usize> {
+    pub fn insert_offsets(&mut self, source: usize, targets: Vec<usize>, branching: bool, is_call: bool) -> Vec<usize> {
         let node_index = self.get_node_at(source)
             .expect(format!("No node at instruction offset {:x}", source).as_str());
 
@@ -255,54 +255,44 @@ impl<I: InstructionTrait> FlowGraph<I> {
         println!("{}", output)
     }
 
-    pub fn construct_call_graph(&self) -> Result<CallGraph, String> {
-        let mut call_graph = CallGraph::new();
-        let mut mapped_functions = HashSet::new();
-        let mut live_functions = vec!(0);
+    pub fn construct_call_graph(&self, calls: HashSet<(usize, usize)>) -> Result<CallGraph, String> {
+        let mut call_graph = CallGraph::new(calls.clone());
+        let mut mapped_functions = HashMap::new();
 
-        while let Some(node) = live_functions.pop() {
-            let mut current_function_nodes = vec!(node);
-            let mut live_nodes = vec!(node);
+        for (offset, target) in calls {
+            match mapped_functions.get(&target) {
+                Some(function) => call_graph.add_entry(offset, function),
+                None => {
+                    let node = self.get_node_at(offset).unwrap();
+                    let mut exits = Vec::new();
+                    let mut current_function_nodes = vec!(node);
+                    let mut live_nodes = vec!(node);
 
-            while let Some(live_node) = live_nodes.pop() {
-                if let Some(final_offset) = self.final_instruction(live_node)? {
-                    let final_instruction = self.get_inst(final_offset).unwrap();
+                    while let Some(live_node) = live_nodes.pop() {
+                        if let Some(final_offset) = self.final_instruction(live_node)? {
+                            let final_instruction = self.get_inst(final_offset).unwrap();
 
-                    if final_instruction.is_return() {
-                        continue
-                    }
-
-                    if final_instruction.is_call() {
-                        let next_instruction_offset =
-                            final_offset +
-                            final_instruction.length();
-
-                        for next_node in self.get_next_nodes(live_node) {
-                            let target = self.initial_instruction(next_node).unwrap().unwrap();
-                            if target == next_instruction_offset {
-                                if !current_function_nodes.contains(&next_node) {
-                                    live_nodes.push(next_node);
-                                    current_function_nodes.push(next_node);
-                                }
-                            } else if !mapped_functions.contains(&next_node) {
-                                live_functions.push(next_node);
-                                mapped_functions.insert(next_node);
+                            if final_instruction.is_ret() {
+                                exits.push(live_node);
+                                continue
                             }
                         }
+                            
+                        for target in self.get_next_nodes(live_node) {
+                            if !current_function_nodes.contains(&target) {
+                                live_nodes.push(target);
+                                current_function_nodes.push(target);
+                            }
+                        }
+                    }
 
-                        continue
-                    }
-                }
-                    
-                for target in self.get_next_nodes(live_node) {
-                    if !current_function_nodes.contains(&target) {
-                        live_nodes.push(target);
-                        current_function_nodes.push(target);
-                    }
+                    let function = call_graph.add_function(
+                        current_function_nodes, exits);
+
+                    call_graph.add_entry(offset, function);
+                    mapped_functions.insert(target, function);
                 }
             }
-
-            call_graph.push(current_function_nodes);
         }
 
         Ok(call_graph)
@@ -328,7 +318,8 @@ impl Node {
 
 struct Edge {
     from: usize,
-    to: usize
+    to: usize,
+    is_call: bool
 }
 
 impl Edge {
@@ -385,7 +376,7 @@ impl<I: InstructionTrait> fmt::Display for FlowGraph<I> {
 }
 
 pub trait AnalyzerTrait<I: InstructionTrait> {
-    fn determine_successors(&self, file_buffer: &[u8], graph: &FlowGraph<I>, offset: usize) -> Result<HashSet<usize>, String>;
+    fn determine_successors(&self, file_buffer: &[u8], graph: &FlowGraph<I>, call_graph: &CallGraph, offset: usize) -> Result<HashSet<usize>, String>;
 }
 
 impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
@@ -405,4 +396,37 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
     }
 }
 
-pub type CallGraph = Vec<Vec<usize>>;
+struct Function {
+    nodes: Vec<usize>,
+    exits: Vec<usize>
+}
+
+pub struct CallGraph {
+    functions: Vec<Function>,
+    entries: HashMap<usize, usize>,
+    reverse_entries:...
+    calls: HashSet<(usize, usize)>
+}
+
+impl CallGraph {
+    fn new(calls: HashSet<(usize, usize)>) -> CallGraph {
+        CallGraph {
+            functions: Vec::new(),
+            entries: HashMap::new(),
+            calls: calls
+        }
+    }
+
+    fn add_function(&self, nodes: Vec<usize>, exits: Vec<usize>) -> usize {
+        self.functions.push(Function {
+            nodes: nodes,
+            exits: exits,
+        });
+
+        self.functions.len() - 1
+    }
+
+    fn add_entry(&self, offset: usize, target_function: usize) {
+        self.entries.insert(offset, target_function);
+    }
+}

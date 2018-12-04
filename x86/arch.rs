@@ -1,4 +1,4 @@
-use defs::*;
+use defs::main::*;
 use x86::dis;
 use std::fmt;
 

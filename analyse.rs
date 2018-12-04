@@ -25,34 +25,28 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
 
             graph.add_inst_to_listing(offset, inst);
 
-            let (offsets, labels, indeterminate) = inst.successors(offset);
-
-            let branching = offsets.len() > 1
-                || labels.len() > 0;
-
-            let valid_offsets = offsets.into_iter().filter(|offset|
-                *offset < file_buffer.len()).collect();
-
-            for label in labels {
-                graph.add_label(label);
-            }
+            let (successors, branching, indeterminate) = inst.successors(offset);
 
             if indeterminate {
                 indeterminates.push(offset);
             }
             
+            let valid_successors = successors.into_iter()
+                .filter(|(target, isCall)| target < file_buffer.len()).collect();
+
             let mut new_offsets = graph.
-                insert_offsets(offset, valid_offsets, branching);
+                insert_offsets(offset, valid_successors, branching);
+
             unexplored.append(&mut new_offsets);
         }
 
-        update_return_statement_targets(&mut graph);
+        let call_graph = graph.construct_call_graph();
 
         new_code = false;
 
         for offset in indeterminates.iter() {
             println!("offset {} is indeterminate", offset);
-            let offsets = analyzer.determine_successors(file_buffer, &graph, *offset)?;
+            let offsets = analyzer.determine_successors(file_buffer, &graph, &call_graph, *offset)?;
 
             print!("Offsets for {}:", offset);
             for target in offsets.iter() {
@@ -71,59 +65,4 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
     }
     
     return Ok(graph);
-}
-
-fn update_return_statement_targets<I: InstructionTrait>(graph: &mut FlowGraph<I>) {
-    let mut reaching_sets = HashMap::new();
-    let mut live_nodes = graph.get_entry_nodes();
-    for node in live_nodes.clone() {
-        reaching_sets.insert(node, HashSet::new());
-    }
-    let mut new_edges = Vec::new();
-
-    while let Some(node) = live_nodes.pop() {
-        let final_instruction_offset = graph.final_instruction(node).unwrap().unwrap();
-        let final_instruction =
-            graph.get_inst(final_instruction_offset).unwrap();
-
-        if final_instruction.is_return() {
-            for source in reaching_sets.get(&node).unwrap() {
-                let source_final_inst =
-                    graph.final_instruction(*source).unwrap().unwrap();
-                let target_offset = source_final_inst +
-                    graph.get_inst(source_final_inst).unwrap().length();
-                if let Some(target_node) = graph.get_node_at(target_offset) {
-                    new_edges.push((node, target_node));
-                }
-            }
-        }
-
-        for target in graph.get_next_nodes(node) {
-            let calls = if final_instruction.is_call() &&
-                (graph.initial_instruction(target).unwrap().unwrap()
-                != final_instruction_offset
-                + final_instruction.length()) {
-                [node].iter().cloned().collect()
-            } else {
-                reaching_sets.get(&node).unwrap().clone()
-            };
-
-            if reaching_sets.contains_key(&target) {
-                let target_calls = reaching_sets.get(&target)
-                    .unwrap().clone();
-                if !calls.is_subset(&target_calls) {
-                    reaching_sets.insert(target, calls.
-                        union(&target_calls).cloned().collect());
-                    live_nodes.push(target);
-                }
-            } else {
-                reaching_sets.insert(target, calls.clone());
-                live_nodes.push(target);
-            }
-        }
-    }
-
-    for (from, to) in new_edges {
-        graph.add_edge(from, to);
-    }
 }

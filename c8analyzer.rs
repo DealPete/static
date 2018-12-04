@@ -1,18 +1,36 @@
 use defs::main::*;
 use defs::set::*;
+use defs::ir;
 use graph::state_flow_graph::StateFlowGraph;
 use chip8::sim::Interpreter;
 use chip8::state::State;
 use chip8::arch::*;
 use graph::flow_graph::*;
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::collections::HashMap;
+
+pub struct Searcher {
+    call_stack: Vec<usize>,
+    current_node: usize,
+    origin_node: usize
+}
+
+impl Searcher {
+    fn new(current_node: usize, origin_node) -> Searcher {
+        Searcher {
+            call_stack: Vec::new(),
+            current_node: current_node,
+            origin_node: origin_node
+        }
+    }
+}
 
 pub struct Chip8Analyzer {
 }
 
 impl Chip8Analyzer {
-    pub fn from_operand(&self, graph: &FlowGraph<Instruction>, offset: usize, operand: Operand) -> Result<HashSet<usize>, String> {
+    pub fn to_slice(&self, graph: &FlowGraph<Instruction>, call_graph: &CallGraph, offset: usize, operand: Operand) -> Result<FlowGraph<ir::Instruction>, String> {
         match operand {
             Operand::I | Operand::V(_) => (),
             _ => return Err(String::from("Invalid operand to construct slice from."))
@@ -23,20 +41,27 @@ impl Chip8Analyzer {
             Some(node) => node
         };
 
+        let mut inst_slice = BTreeSet::new();
+        let mut slice_graph = FlowStateGraph::with_entry();
+        slice_graph.add_node();
+
+        let mut current_origin = current_node;
+        let mut node_map = [(current_node, 1)].iter().cloned().collect();
         let mut coverage_sets: HashMap<usize, HashSet<Operand>> = HashMap::new();
-        let mut live_nodes = Vec::new();
+        let mut searchers = Vec::new();
         let mut coverage: HashSet<Operand> = [operand].iter().cloned().collect();
         let mut insts = graph.get_instructions_at(current_node);
         let mut index = insts.iter().position(|&inst| inst == offset).unwrap();
-        let mut slice = HashSet::new();
 
         loop {
             if index == 0 {
-                for previous_node in graph.get_previous_nodes(current_node) {
+                let previous_nodes = graph.get_previous_nodes(current_node);
+
+                for previous_node in ... {
                     if previous_node > 0 {
                         if !coverage_sets.contains_key(&previous_node) {
                             coverage_sets.insert(previous_node, coverage.clone());
-                            live_nodes.push(previous_node);
+                            searchers.push(Searcher::new(previous_node, current_origin));
                         } else {
                             let node_coverage = coverage_sets.get_mut(&previous_node)
                                 .unwrap();
@@ -49,12 +74,13 @@ impl Chip8Analyzer {
             }
 
             if index == 0 || coverage.len() == 0 {
-                match live_nodes.pop() {
+                match searchers.pop() {
                     None => break,
-                    Some(live_node) => {
-                        coverage = coverage_sets.get(&live_node)
+                    Some(searcher) => {
+                        coverage = coverage_sets.get(&searcher.current_node)
                             .expect("expected coverage set").clone();
-                        current_node = live_node;
+                        current_node = searcher.current_node;
+                        current_origin = searcher.origin_node;
                         insts = graph.get_instructions_at(current_node);
                         index = insts.len() - 1;
                     }
@@ -65,7 +91,7 @@ impl Chip8Analyzer {
 
             let inst_offset = insts[index];
             let inst = graph.get_inst(inst_offset).expect(format!(
-                    "graph doesn't contain index {}", inst_offset).as_str());
+                    "graph doesn't contain index {}", inst_offset).as_str()).unwrap();
             match inst.mnemonic {
                 Mnemonic::CLS | Mnemonic::LDBCD | Mnemonic::SCD | Mnemonic::JP
                 | Mnemonic::SCR | Mnemonic::SCL | Mnemonic::LOW | Mnemonic::HIGH
@@ -78,8 +104,23 @@ impl Chip8Analyzer {
                 | Mnemonic::LD | Mnemonic::LDPTR | Mnemonic::RND | Mnemonic::SE
                 | Mnemonic::SNE => {
                     let operand = inst.op1.expect("expected operand 1");
+
                     if coverage.contains(&operand) {
-                        slice.insert(inst_offset);
+                        let slice_graph_current_origin = node_map.get(&current_origin)
+                            .expect("exprected current origin to be in node map");
+                        match node_map.get(&current_node) {
+                            Some(node) => {
+                                slice_graph.add_edge(node, slice_graph_current_origin);
+                            }
+                            None => {
+                                let new_node = slice_graph.add_node();
+                                node_map.insert(current_node, new_node);
+                                slice_graph.add_edge(new_node, slice_graph_current_origin);
+                            }
+                        }
+
+                        inst_slice.insert(inst_offset);
+                        current_origin = current_node;
                         if inst.mnemonic == Mnemonic::LD
                             || inst.mnemonic == Mnemonic::RND
                             || inst.mnemonic == Mnemonic::LDPTR
@@ -104,12 +145,24 @@ impl Chip8Analyzer {
             }
         }
 
-        Ok(slice)
+        for offset in inst_slice {
+            let graph_node = graph.get_node_at(offset)
+                .expect("inst should exist at node.");
+            let graph_slice_node = node_map.get(&graph_node)
+                .expect("node_map should contain graph_node.");
+            let instruction = graph.get_inst(&graph_node)
+                .expect("inst should exist in listing.");
+            graph_slice.add_inst_to_listing(graph_slice_node, *instruction);
+            graph_slice.insert_offset_at_node_index(
+                offset, graph_slice_node);
+        }
+
+        Ok(slice_graph)
     }
 }
 
 impl AnalyzerTrait<Instruction> for Chip8Analyzer {
-    fn determine_successors(&self, file_buffer: &[u8], graph: &FlowGraph<Instruction>, offset: usize) -> Result<HashSet<usize>, String> {
+    fn determine_successors(&self, file_buffer: &[u8], graph: &FlowGraph<Instruction>, call_graph: &CallGraph, offset: usize) -> Result<HashSet<usize>, String> {
         let instruction = match graph.get_inst(offset) {
             None => return Err(format!("no instruction found at offset 0x{:x}", offset)),
             Some(instruction) => instruction
@@ -117,7 +170,7 @@ impl AnalyzerTrait<Instruction> for Chip8Analyzer {
 
         if let Mnemonic::JP = instruction.mnemonic {
             if let Operand::V(reg) = instruction.unpack_op1() {
-                let slice = self.from_operand(graph, offset, Operand::V(reg))?;
+                let slice = self.to_slice(graph, call_graph, offset, Operand::V(reg))?;
                 let states = simulate_slice(file_buffer, graph, slice, offset)?;
                 let mut offsets = HashSet::new();
                 for state in states {
@@ -155,7 +208,6 @@ fn simulate_slice<'a>(file_buffer: &'a [u8], flow_graph: &FlowGraph<Instruction>
 //    graph.show_slice(&slice);
     graph.reduce_to_slice(slice.clone());
     graph.show_slice(&slice);
-//    panic!("stopping here");
     let mut final_states = Vec::new();
 
     while let Some(mut state) = graph.next_live_state() {

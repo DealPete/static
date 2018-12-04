@@ -15,7 +15,7 @@ impl<'a> Architecture<Instruction> for Chip8 {
         let mut output = String::new();
         let mut last_inst_was_skip = false;
         for i in 0..0x1000 {
-            if let Some(instruction) = listing.instructions.get(&i) {
+            if let Some(Meta::Inst(instruction)) = listing.instructions.get(&i) {
                 if listing.is_labelled(i) {
                     output.push_str(format!("{:4x}:   ", i + 0x200).as_str());
                 } else {
@@ -100,25 +100,24 @@ impl InstructionTrait for Instruction {
         2
     }
 
-    fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool) {
+    fn successors(&self, offset: usize) -> (Vec<usize, bool, bool>, bool) {
         match self.mnemonic {
             Mnemonic::CALL => match self.unpack_op1() {
                 Operand::Address(address) =>
-                    (vec!(offset + 2, address as usize - 0x200),
-                        vec!(address as usize - 0x200), false),
+                    (vec!((offset + 2, false),
+                        (address as usize - 0x200, true)), true, false),
                 _ => panic!("CALL instruction should have address as operand.")
             },
             Mnemonic::JP => match self.unpack_op1() {
                 Operand::Address(address) =>
-                    (vec!(address as usize - 0x200), vec!(address as usize - 0x200),
-                    false),
-                _ => (Vec::new(), Vec::new(), true)
+                    (vec!((address as usize - 0x200, true)), true, false)
+                _ => (Vec::new(), true, true)
             },
-            Mnemonic::RET => (Vec::new(), Vec::new(), false),
+            Mnemonic::RET => (Vec::new(), false, false),
             Mnemonic::SE | Mnemonic::SNE | Mnemonic::SKP | Mnemonic::SKNP =>
-                (vec!(offset + 2, offset + 4), Vec::new(), false),
-            Mnemonic::EXIT => (Vec::new(), Vec::new(), false),
-            _ => (vec!(offset + 2), Vec::new(), false)
+                (vec!((offset + 2, false), (offset + 4, false)), true, false),
+            Mnemonic::EXIT => (Vec::new(), false, false),
+            _ => (vec!((offset + 2, false)), false, false)
         }
     }
 }

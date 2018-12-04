@@ -26,23 +26,22 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_return(&self) -> bool;
     fn is_rel_branch(&self) -> bool;
 
-    // successors(instruction, offset) -> (next, jumps, indeterminate)
+    // successors(instruction, offset) ->
+    //  (targets = [target, call], branch, indeterminate)
     // successors computes the instruction's successors from
     // its optype and operands, assuming it is found at offset in the
     // file buffer.
     //
-    // "next" normally contains zero or one offsets representing the
-    // next instruction in normal control flow. May contain more
-    // instructions if the targets shouldn't be labelled.
+    // "call" is true if "target" is the target of a function call.
     //
-    // "jumps" is a vector of possible jump targets.
+    // "branch" is true if the instruction branches.
     //
     // "indeterminate" is true if the set of successor offsets
     // couldn't be determined without knowledge of program state.
     // (e.g. because instruction is an indirect jump or an interrupt
     // that might end the program).
 
-    fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool);
+    fn successors(&self, offset: usize) -> (Vec<(usize, bool)>, bool, bool);
 }
 
 // Meta-instructions to help with decoding self-modifying code:
