@@ -13,7 +13,9 @@ pub fn simulate_exhaustively<S, I, A, Z>(file_buffer: &Vec<u8>, simulator: Z, in
           Z: SimulatorTrait<S, I>
 {
     let entry_offset = Z::next_inst_offset(&initial_state);
-    let mut graph = StateFlowGraph::new(entry_offset, initial_state);
+    let mut graph = StateFlowGraph::new();
+    let node = graph.add_node_at(entry_offset);
+    graph.add_state(initial_state, node);
 
     while let Some(mut state) = graph.next_live_state() {
         match log_type {
@@ -30,7 +32,7 @@ pub fn simulate_exhaustively<S, I, A, Z>(file_buffer: &Vec<u8>, simulator: Z, in
             let inst_offset = Z::next_inst_offset(&state);
             let inst = match graph.get_inst(inst_offset) {
                 None => architecture.decode_instruction(file_buffer, inst_offset)?,
-                Some(instruction) => *instruction
+                Some(instruction) => instruction.unwrap()
             };
             
             graph.add_inst_to_listing(inst_offset, inst);
