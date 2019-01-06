@@ -5,7 +5,7 @@ pub mod chip8;
 mod c8analyzer;
 
 use chip8::arch::*;
-use graph::flow_graph::{FlowGraph, CallGraph};
+use graph::flow_graph::{Function, FlowGraph, CallGraph};
 
 static PROGRAM: &str =
 "#include \"api.h\"
@@ -186,6 +186,15 @@ fn main() {
 }
 
 fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_stem: &str, data: Vec<u8>) -> Result<String, String> {
+    let analyzer = c8analyzer::Chip8Analyzer {};
+
+    for offset in graph.listing().clone() {
+        if graph.get_inst(offset).unwrap().unwrap().mnemonic == Mnemonic::DRW {
+            let offsets = analyzer.possible_I_values(&data, &graph, &call_graph, offset)?;
+            println!("For offset {}, I can be {:x?}", offset, offsets);
+        }
+    }
+
     let mut data_string = String::new();
 
     for byte in data {
@@ -194,8 +203,8 @@ fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_
 
     let mut headers = String::new();
 
-    for function in call_graph.iter().skip(1) {
-        let first_offset = graph.initial_instruction(function[0])?.unwrap();
+    for function in call_graph.functions().iter().skip(1) {
+        let first_offset = graph.initial_instruction(function.nodes()[0])?.unwrap();
         headers.push_str(format!(
             "void f{:x}();\n", first_offset + 0x200).as_str());
     }
@@ -204,8 +213,8 @@ fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_
     let mut main = String::new();
 
     while let Some(function) = call_graph.pop() {
-        if call_graph.len() > 0 {
-            let address = graph.initial_instruction(function[0])?.unwrap() + 0x200;
+        if call_graph.functions().len() > 0 {
+            let address = graph.initial_instruction(function.nodes()[0])?.unwrap() + 0x200;
             functions.push_str(format!("void f{:x}() {{\n", address).as_str());
             functions.push_str(compile_function(&graph, function, false)?.as_str());
             functions.push_str("}\n\n");
@@ -221,13 +230,13 @@ fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_
               .replace("{main}", &main))
 }
 
-fn compile_function(graph: &FlowGraph<Instruction>, function: Vec<usize>, main: bool) -> Result<String, String> {
+fn compile_function(graph: &FlowGraph<Instruction>, function: Function, main: bool) -> Result<String, String> {
     let mut output = String::new();
     let mut node_outputs = Vec::new();
 
-    for node in function {
-        if let Some(offset) = graph.initial_instruction(node)? {
-            node_outputs.push((offset, compile_node(&graph, node, main)));
+    for node in function.nodes() {
+        if let Some(offset) = graph.initial_instruction(*node)? {
+            node_outputs.push((offset, compile_node(&graph, *node, main)));
         }
     }
 
@@ -243,11 +252,12 @@ fn compile_function(graph: &FlowGraph<Instruction>, function: Vec<usize>, main: 
 fn compile_node(graph: &FlowGraph<Instruction>, node: usize, main: bool) -> String {
     let node_address = graph.initial_instruction(node).unwrap()
         .expect(format!("no instruction at node {}", node).as_str()) + 0x200;
-let mut output = format!("\nl{:x}:\n", node_address);
+    let mut output = format!("\nl{:x}:\n", node_address);
     
     for offset in graph.get_instructions_at(node) {
         let inst = graph.get_inst(*offset)
-            .expect(format!("no instruction at offset {:x}", offset).as_str());
+            .expect(format!("no instruction at offset {:x}", offset).as_str())
+            .unwrap();
 
         output.push_str("\t");
         output.push_str( match inst.mnemonic {
@@ -352,7 +362,8 @@ fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option
                 let mut output = String::from("switch (V[0]) {\n");
                 let node = graph.get_node_at(offset).unwrap();
 
-                for target in graph.get_next_nodes(node) {
+                let (targets, _) = graph.get_next_nodes(node);
+                for target in targets {
                     let target_offset = graph.initial_instruction(target)
                         .unwrap().unwrap();
                     let v_0 = target_offset + 0x200 - address as usize;

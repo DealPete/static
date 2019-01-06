@@ -100,24 +100,23 @@ impl InstructionTrait for Instruction {
         2
     }
 
-    fn successors(&self, offset: usize) -> (Vec<usize, bool, bool>, bool) {
+    fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool, bool) {
         match self.mnemonic {
             Mnemonic::CALL => match self.unpack_op1() {
                 Operand::Address(address) =>
-                    (vec!((offset + 2, false),
-                        (address as usize - 0x200, true)), true, false),
+                    (vec!(offset + 2), vec!(address as usize - 0x200), true, false),
                 _ => panic!("CALL instruction should have address as operand.")
             },
             Mnemonic::JP => match self.unpack_op1() {
                 Operand::Address(address) =>
-                    (vec!((address as usize - 0x200, true)), true, false)
-                _ => (Vec::new(), true, true)
+                    (vec!(address as usize - 0x200), Vec::new(), true, false),
+                _ => (Vec::new(), Vec::new(), true, true)
             },
-            Mnemonic::RET => (Vec::new(), false, false),
+            Mnemonic::RET => (Vec::new(), Vec::new(), true, false),
             Mnemonic::SE | Mnemonic::SNE | Mnemonic::SKP | Mnemonic::SKNP =>
-                (vec!((offset + 2, false), (offset + 4, false)), true, false),
-            Mnemonic::EXIT => (Vec::new(), false, false),
-            _ => (vec!((offset + 2, false)), false, false)
+                (vec!(offset + 2, offset + 4), Vec::new(), true, false),
+            Mnemonic::EXIT => (Vec::new(), Vec::new(), true, false),
+            _ => (vec!(offset + 2), Vec::new(), false, false)
         }
     }
 }

@@ -23,9 +23,9 @@ static COMBINABLE_OPERANDS: [Operand; 19] = [Operand::V(0), Operand::V(1),
     Operand::DelayTimer, Operand::SoundTimer];
 
 impl<'a> State<'a> {
-    pub fn new(initial_memory: &'a [u8], start_offset: u16) -> State<'a> {
+    pub fn new(initial_memory: &'a [u8], start_offset: usize) -> State<'a> {
         State {
-            pc: 0x200 + start_offset,
+            pc: 0x200 + start_offset as u16,
             sp: 0,
             I: Word::Undefined,
             V: {
@@ -66,8 +66,9 @@ impl<'a> State<'a> {
                 0x5, 0x6, 0x7, 0x8, 0x9, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf]),
             Operand::DelayTimer => self.delay_timer.clone(),
             Operand::SoundTimer => self.sound_timer.clone(),
-            Operand::Numeral(_) | Operand::LargeNumeral(_) =>
-                Byte::Undefined,
+            Operand::Numeral(x) => self.V[x].clone().times(5),
+            Operand::LargeNumeral(x) =>
+                self.V[x].clone().times(10).plus(80),
             _ => panic!("unimplemented byte type.")
         }
     }

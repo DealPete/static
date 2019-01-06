@@ -27,21 +27,21 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_rel_branch(&self) -> bool;
 
     // successors(instruction, offset) ->
-    //  (targets = [target, call], branch, indeterminate)
+    //  (targets, calls, branch, indeterminate)
     // successors computes the instruction's successors from
     // its optype and operands, assuming it is found at offset in the
     // file buffer.
     //
-    // "call" is true if "target" is the target of a function call.
-    //
-    // "branch" is true if the instruction branches.
+    // "targets" contains the non-call successor offsets.
+    // "calls" contains the successor offset that are function calls.
+    // "branch" is true if the instruction ends a basic block.
     //
     // "indeterminate" is true if the set of successor offsets
     // couldn't be determined without knowledge of program state.
     // (e.g. because instruction is an indirect jump or an interrupt
     // that might end the program).
 
-    fn successors(&self, offset: usize) -> (Vec<(usize, bool)>, bool, bool);
+    fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool, bool);
 }
 
 // Meta-instructions to help with decoding self-modifying code:
@@ -67,6 +67,15 @@ pub enum Meta<I: InstructionTrait> {
     SetFlag(usize)
 }
 
+impl<I: InstructionTrait> Meta<I> {
+    pub fn unwrap(&self) -> I {
+        match *self {
+            Meta::Inst(instruction) => instruction,
+            _ => panic!("can't unwrap meta-instruction")
+        }
+    }
+}
+
 impl<I: InstructionTrait> fmt::Display for Meta<I> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -80,31 +89,34 @@ impl<I: InstructionTrait> fmt::Display for Meta<I> {
 
 #[derive(Clone)]
 pub struct Listing<I: InstructionTrait> {
-    pub entry_offsets: Vec<usize>,
+    pub entry_offset: usize,
     pub highest_offset: usize,
     pub instructions: HashMap<usize, Meta<I>>,
     labels: HashSet<usize>,
-    indeterminates: HashSet<usize>
+    indeterminates: HashSet<usize>,
+    iter_offset: usize
 }
 
 impl<I: InstructionTrait> Listing<I> {
     pub fn new() -> Listing<I> {
         Listing {
-            entry_offsets: Vec::new(),
+            entry_offset: 0,
             highest_offset: 0,
             instructions: HashMap::<usize, Meta<I>>::new(),
             labels: HashSet::new(),
-            indeterminates: HashSet::new()
+            indeterminates: HashSet::new(),
+            iter_offset: 0
         }
     }
 
     pub fn with_entry(entry_offset: usize) -> Listing<I> {
         Listing {
-            entry_offsets: vec!(entry_offset),
-            highest_offset: entry_offset,
+            entry_offset: entry_offset,
+            highest_offset: entry_offset, 
             instructions: HashMap::new(),
             labels: HashSet::new(),
-            indeterminates: HashSet::new()
+            indeterminates: HashSet::new(),
+            iter_offset: 0
         }
     }
 
@@ -136,6 +148,26 @@ impl<I: InstructionTrait> Listing<I> {
         self.indeterminates.contains(&offset)
     }
 }
+
+impl<I: InstructionTrait> Iterator for Listing<I> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        loop {
+            if self.iter_offset > self.highest_offset {
+                self.iter_offset = 0;
+                return None;
+            }
+
+            self.iter_offset += 1;
+            if let Some(_) = self.get(self.iter_offset - 1) {
+                return Some(self.iter_offset - 1);
+            }
+        }
+    }
+}
+
+
 
 pub enum SimResult<S: StateTrait<S>> {
     Error(S, String),

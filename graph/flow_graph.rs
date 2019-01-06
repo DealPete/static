@@ -1,4 +1,3 @@
-use graph::state_flow_graph::StateFlowGraph;
 use defs::main::*;
 use std::fmt;
 use std::collections::HashMap;
@@ -32,7 +31,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
                 inbound_edges: [0].iter().cloned().collect(),
                 .. Node::new()
             }),
-            edges: vec!(Edge::new(0, 1)),
+            edges: vec!(Edge::new(0, 1, false)),
             inst_map: [(entry_offset, 1)].iter().cloned().collect()
         }
     }
@@ -52,10 +51,9 @@ impl<I: InstructionTrait> FlowGraph<I> {
         }
     }
 
-    pub fn get_entry_nodes(&self) -> Vec<usize> {
-        self.listing.entry_offsets.iter().map(|offset|
-            self.get_node_at(*offset).expect("Graph has no entry node!"))
-            .collect()
+    pub fn get_entry_node(&self) -> usize {
+        let entry_offset = self.listing.entry_offset;
+        self.get_node_at(entry_offset).expect("Graph has no entry node!")
     }
 
     pub fn get_instructions_at(&self, node: usize) -> &[usize] {
@@ -63,28 +61,43 @@ impl<I: InstructionTrait> FlowGraph<I> {
     }
 
     pub fn get_previous_nodes(&self, node_index: usize) -> Vec<usize> {
-        let mut nodes = Vec::new();
+        let mut previous_nodes = Vec::new();
+        let mut calling_nodes = Vec::new();
+
         for edge_index in (&self.nodes[node_index]).inbound_edges.iter() {
-            nodes.push((&self.edges[*edge_index]).get_from());
+            let edge = &self.edges[*edge_index];
+            if edge.is_call {
+                calling_nodes.push(edge.get_from());
+            } else {
+                previous_nodes.push(edge.get_from());
+            }
         }
 
-        nodes
+        previous_nodes
+        //(previous_nodes, calling_nodes)
     }
 
-    pub fn get_next_nodes(&self, node_index: usize) -> Vec<usize> {
-        let mut nodes = Vec::new();
+    pub fn get_next_nodes(&self, node_index: usize) -> (Vec<usize>, Vec<usize>) {
+        let mut next_nodes = Vec::new();
+        let mut call_nodes = Vec::new();
+
         for edge_index in (&self.nodes[node_index]).outbound_edges.iter() {
-            nodes.push((&self.edges[*edge_index]).get_to());
+            let edge = &self.edges[*edge_index];
+            if edge.is_call {
+                call_nodes.push(edge.get_to());
+            } else {
+                next_nodes.push(edge.get_to());
+            }
         }
 
-        nodes
+        (next_nodes, call_nodes)
     }
 
     pub fn remove_node(&mut self, node_index: usize) {
         let node = self.nodes[node_index].clone();
         for in_edge in node.inbound_edges.iter() {
             for out_edge in node.outbound_edges.iter() {
-                self.add_edge(*in_edge, *out_edge);
+                self.add_edge(*in_edge, *out_edge, false);
             }
         }
     }
@@ -103,11 +116,11 @@ impl<I: InstructionTrait> FlowGraph<I> {
         false
     }
 
-    pub fn add_edge(&mut self, source: usize, target: usize) {
+    pub fn add_edge(&mut self, source: usize, target: usize, is_call: bool) {
         if !self.has_edge(source, target) {
             self.nodes[source].outbound_edges.insert(self.edges.len());
             self.nodes[target].inbound_edges.insert(self.edges.len());
-            self.edges.push(Edge::new(source, target));
+            self.edges.push(Edge::new(source, target, is_call));
         }
     }
     
@@ -178,7 +191,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
 
                 self.nodes[node_index].outbound_edges = self.nodes[new_node_index].outbound_edges.clone();
                 self.nodes[new_node_index].outbound_edges.clear();
-                self.add_edge(new_node_index, node_index);
+                self.add_edge(new_node_index, node_index, false);
 
                 for inst in self.nodes[new_node_index].insts.iter() {
                     self.inst_map.insert(*inst, new_node_index);
@@ -200,7 +213,7 @@ impl<I: InstructionTrait> FlowGraph<I> {
                 None => {
                     if branching {
                         let new_node_index = self.add_node_at(successor);
-                        self.add_edge(node_index, new_node_index);
+                        self.add_edge(node_index, new_node_index, is_call);
                         self.add_label(successor);
                     } else {
                         self.insert_offset_at_node_index(successor, node_index);
@@ -209,9 +222,9 @@ impl<I: InstructionTrait> FlowGraph<I> {
                 },
                 Some(successor_node_index) =>
                     match self.split_node_at(successor_node_index, successor) {
-                        None => self.add_edge(node_index, successor_node_index),
+                        None => self.add_edge(node_index, successor_node_index, is_call),
                         Some(new_node_index) =>
-                            self.add_edge(node_index, new_node_index)
+                            self.add_edge(node_index, new_node_index, is_call)
                     }
             }
         }
@@ -219,80 +232,50 @@ impl<I: InstructionTrait> FlowGraph<I> {
         unexplored
     }
 
-    pub fn show_slice(&self, slice: &HashSet<usize>) {
-        let mut output = String::from("=== Flow Graph ===\n\n");
-        for i in 1..self.nodes.len() {
-            output.push_str(format!("=== Node {} [{:x}] ===", i,
-                self.initial_instruction(i).unwrap().unwrap()).as_str());
-            let ref node = self.nodes[i];
-            let mut has_instructions = false;
-            for inst in node.insts.iter() {
-                if slice.contains(&inst) {
-                    has_instructions = true;
-                    output.push_str(
-                        format!("\n{}", self.listing.get(*inst).unwrap()).as_str());
+    pub fn construct_call_graph(&self) -> Result<CallGraph, String> {
+        let mut call_graph = CallGraph::new();
+        let mut functions = vec!(0);
+        let mut entries = vec!(0);
+
+        while let Some(node) = entries.pop() {
+            let mut exits = Vec::new();
+            let mut current_function_nodes = vec!(node);
+            let mut live_nodes = vec!(node);
+
+            while let Some(live_node) = live_nodes.pop() {
+                if let Some(final_offset) = self.final_instruction(live_node)? {
+                    let final_instruction = self.get_inst(final_offset).unwrap().unwrap();
+
+                    if final_instruction.is_return() {
+                        exits.push(live_node);
+                        continue
+                    }
+                }
+                    
+                let (targets, calls) = self.get_next_nodes(live_node);
+
+                for target in targets {
+                    if !current_function_nodes.contains(&target) {
+                        live_nodes.push(target);
+                        current_function_nodes.push(target);
+                    }
+                }
+
+                for call in calls {
+                    match functions.iter().position(|&func| func == call) {
+                        None => {
+                            entries.push(call);
+                            functions.push(call);
+                        },
+                        Some(index) => call_graph.add_entry(node, index)
+                    }
                 }
             }
-            if has_instructions {
-                if !node.inbound_edges.is_empty() {
-                    let mut inbound = String::new();
-                    for edge in node.inbound_edges.iter() {
-                        inbound.push_str(format!("{} ", self.edges[*edge].get_from()).as_str());
-                    }
-                    output.push_str(format!("\nInbound nodes: {}", inbound).as_str());
-                }
-                if !node.outbound_edges.is_empty() {
-                    let mut outbound = String::new();
-                    for edge in node.outbound_edges.iter() {
-                        outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
-                    }
-                    output.push_str(format!("\nOutbound nodes: {}", outbound).as_str());
-                }
-            }
-            output.push_str("\n"); 
-        }
 
-        println!("{}", output)
-    }
+            let function = call_graph.add_function(
+                current_function_nodes, exits);
 
-    pub fn construct_call_graph(&self, calls: HashSet<(usize, usize)>) -> Result<CallGraph, String> {
-        let mut call_graph = CallGraph::new(calls.clone());
-        let mut mapped_functions = HashMap::new();
-
-        for (offset, target) in calls {
-            match mapped_functions.get(&target) {
-                Some(function) => call_graph.add_entry(offset, function),
-                None => {
-                    let node = self.get_node_at(offset).unwrap();
-                    let mut exits = Vec::new();
-                    let mut current_function_nodes = vec!(node);
-                    let mut live_nodes = vec!(node);
-
-                    while let Some(live_node) = live_nodes.pop() {
-                        if let Some(final_offset) = self.final_instruction(live_node)? {
-                            let final_instruction = self.get_inst(final_offset).unwrap();
-
-                            if final_instruction.is_ret() {
-                                exits.push(live_node);
-                                continue
-                            }
-                        }
-                            
-                        for target in self.get_next_nodes(live_node) {
-                            if !current_function_nodes.contains(&target) {
-                                live_nodes.push(target);
-                                current_function_nodes.push(target);
-                            }
-                        }
-                    }
-
-                    let function = call_graph.add_function(
-                        current_function_nodes, exits);
-
-                    call_graph.add_entry(offset, function);
-                    mapped_functions.insert(target, function);
-                }
-            }
+            call_graph.add_entry(node, function);
         }
 
         Ok(call_graph)
@@ -323,10 +306,11 @@ struct Edge {
 }
 
 impl Edge {
-    fn new(from_node_index: usize, to_node_index: usize) -> Edge {
+    fn new(from_node_index: usize, to_node_index: usize, is_call: bool) -> Edge {
         Edge {
             from: from_node_index,
-            to: to_node_index
+            to: to_node_index,
+            is_call: is_call
         }
     }
 
@@ -379,45 +363,39 @@ pub trait AnalyzerTrait<I: InstructionTrait> {
     fn determine_successors(&self, file_buffer: &[u8], graph: &FlowGraph<I>, call_graph: &CallGraph, offset: usize) -> Result<HashSet<usize>, String>;
 }
 
-impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
-    pub fn from_flow_graph(graph: &FlowGraph<I>, state: S) -> StateFlowGraph<I, S> {
-        let mut new_graph = StateFlowGraph::from_listing(graph.listing());
-        for index in 0..graph.nodes.len() {
-            new_graph.add_node_with_insts(graph.get_instructions_at(index));
-        }
-        for edge in graph.edges.iter() {
-            new_graph.add_edge(edge.get_from(), edge.get_to());
-        }
-        for node in graph.get_entry_nodes() {
-            new_graph.add_state(state.clone(), node);
-        }
-
-        new_graph
-    }
-}
-
-struct Function {
+pub struct Function {
     nodes: Vec<usize>,
     exits: Vec<usize>
 }
 
+impl Function {
+    pub fn nodes(&self) -> &Vec<usize> {
+        &self.nodes
+    }
+}
+
 pub struct CallGraph {
     functions: Vec<Function>,
-    entries: HashMap<usize, usize>,
-    reverse_entries:...
-    calls: HashSet<(usize, usize)>
+    entries: HashMap<usize, usize>
 }
 
 impl CallGraph {
-    fn new(calls: HashSet<(usize, usize)>) -> CallGraph {
+    fn new() -> CallGraph {
         CallGraph {
             functions: Vec::new(),
             entries: HashMap::new(),
-            calls: calls
         }
     }
 
-    fn add_function(&self, nodes: Vec<usize>, exits: Vec<usize>) -> usize {
+    pub fn pop(&mut self) -> Option<Function> {
+        self.functions.pop()
+    }
+
+    pub fn functions(&self) -> &Vec<Function> {
+        &self.functions
+    }
+
+    fn add_function(&mut self, nodes: Vec<usize>, exits: Vec<usize>) -> usize {
         self.functions.push(Function {
             nodes: nodes,
             exits: exits,
@@ -426,7 +404,7 @@ impl CallGraph {
         self.functions.len() - 1
     }
 
-    fn add_entry(&self, offset: usize, target_function: usize) {
+    fn add_entry(&mut self, offset: usize, target_function: usize) {
         self.entries.insert(offset, target_function);
     }
 }

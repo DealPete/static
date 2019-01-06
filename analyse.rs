@@ -1,7 +1,5 @@
 use defs::main::*;
 use graph::flow_graph::*;
-use std::collections::HashMap;
-use std::collections::HashSet;
 
 pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, entry_offset: usize) -> Result<FlowGraph<I>, String>
     where I: InstructionTrait,
@@ -25,22 +23,25 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
 
             graph.add_inst_to_listing(offset, inst);
 
-            let (successors, branching, indeterminate) = inst.successors(offset);
+            let (targets, calls, branching, indeterminate) = inst.successors(offset);
 
             if indeterminate {
                 indeterminates.push(offset);
             }
             
-            let valid_successors = successors.into_iter()
-                .filter(|(target, isCall)| target < file_buffer.len()).collect();
+            let valid_successors = targets.into_iter()
+                .filter(|&target| target < file_buffer.len()).collect();
 
             let mut new_offsets = graph.
-                insert_offsets(offset, valid_successors, branching);
-
+                insert_offsets(offset, valid_successors, branching, false);
             unexplored.append(&mut new_offsets);
+
+            let mut new_call_offsets = graph.
+                insert_offsets(offset, calls, true, true);
+            unexplored.append(&mut new_call_offsets);
         }
 
-        let call_graph = graph.construct_call_graph();
+        let call_graph = graph.construct_call_graph()?;
 
         new_code = false;
 
@@ -60,9 +61,9 @@ pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, ent
                 print!("{:x}\t", target);
             }
 
-            unexplored.append(&mut graph.insert_offsets(*offset, offsets.iter().cloned().collect(), true));
+            unexplored.append(&mut graph.insert_offsets(*offset, offsets.iter().cloned().collect(), true, false));
         }
     }
-    
+
     return Ok(graph);
 }

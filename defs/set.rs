@@ -503,6 +503,34 @@ impl Byte {
         }
     }
 
+    pub fn plus(self, addendum: u8) -> Byte {
+        match self {
+            Byte::Undefined => Byte::Undefined,
+            Byte::AnyValue => Byte::AnyValue,
+            Byte::Int(bytes) => Byte::Int(
+                bytes.iter().map(
+                    |byte| byte.wrapping_add(addendum)
+                ).collect()
+            )
+        }
+    }
+
+    pub fn times(self, multiplicand: u8) -> Byte {
+        if multiplicand == 0 {
+            Byte::new(0)
+        } else {
+            match self {
+                Byte::Undefined => Byte::Undefined,
+                Byte::AnyValue => Byte::AnyValue,
+                Byte::Int(bytes) => Byte::Int(
+                    bytes.iter().map(
+                        |byte| byte.wrapping_mul(multiplicand)
+                    ).collect()
+                )
+            }
+        }
+    }
+
     pub fn to_word(self) -> Word {
         match self {
             Byte::Undefined => Word::Undefined,

@@ -28,28 +28,9 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         }
     }
 
-    pub fn with_entry(entry_offset: usize, state: S ) -> StateFlowGraph<I, S> {
+    pub fn from_listing(listing: Listing<I>) -> StateFlowGraph<I, S> {
         StateFlowGraph {
-            listing: Listing::with_entry(entry_offset),
-            nodes: vec!(Node {
-                outbound_edges: [0].iter().cloned().collect(),
-                .. Node::new()
-            }, Node {
-                insts: vec!(entry_offset),
-                inbound_edges: [0].iter().cloned().collect(),
-                .. Node::new()
-            }),
-            edges: vec!(Edge::new(0, 1)),
-            states: vec!(state),
-            inst_map: [(entry_offset, 1)].iter().cloned().collect(),
-            state_map: [(0, 1)].iter().cloned().collect(),
-            live_states: vec!(0)
-        }
-    }
-
-    pub fn from_listing(listing: &Listing<I>) -> StateFlowGraph<I, S> {
-        StateFlowGraph {
-            listing: listing.clone(),
+            listing: listing,
             nodes: Vec::new(),
             edges: Vec::new(),
             states: Vec::new(),
@@ -59,9 +40,9 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         }
     }
 
-    pub fn add_node(&mut self) -> usize {
+    pub fn add_empty_node(&mut self) -> usize {
         self.nodes.push(Node::new());
-        self.nodes.len() - 1;
+        self.nodes.len() - 1
     }
 
     pub fn add_node_at(&mut self, offset: usize) -> usize {
@@ -106,9 +87,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
     }
 
     pub fn get_entry_nodes(&self) -> Vec<usize> {
-        self.listing.entry_offsets.iter().map(|offset|
-            self.get_node_at(*offset).expect("Graph has no entry node!"))
-            .collect()
+        self.get_next_nodes(0)
     }
 
     pub fn get_instructions_at(&self, node: usize) -> &[usize] {
@@ -181,7 +160,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         }
     }
 
-    pub fn get_inst(&self, address: usize) -> Option<&I> {
+    pub fn get_inst(&self, address: usize) -> Option<&Meta<I>> {
         self.listing.instructions.get(&address)
     }
 
@@ -369,86 +348,6 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         } else {
             self.live_states.retain(|&x| x != state_index);
         }
-    }
-
-    pub fn reduce_to_slice(&mut self, slice: HashSet<usize>) {
-        let mut nodes_to_keep = Vec::new();
-
-        for index in 1..self.nodes.len() {
-            let mut keeping = false;
-            let ref node = self.nodes[index];
-
-            for edge in node.inbound_edges.iter().cloned() {
-                let origin = self.edges[edge].get_from();
-                
-                let final_instruction = match self.final_instruction(origin) {
-                    Err(err) => panic!("{}", err),
-                    Ok(inst) => inst
-                };
-                
-                if let Some(final_inst_offset) = final_instruction {
-                    if slice.contains(&final_inst_offset) {
-                        nodes_to_keep.push(index);
-                    } else {
-                        let final_inst = self.get_inst(*final_inst_offset).unwrap();
-                        if final_inst.is_call() || final_inst.is_return() {
-                            nodes_to_keep.push(index);
-                        }
-                    }
-                }
-            }
-
-            if !keeping {
-                if node.insts.iter().any(|offset| slice.contains(offset)) {
-                    nodes_to_keep.push(index);
-                }
-            }
-        }
-
-        for index in 1..self.nodes.len() {
-            if !nodes_to_keep.contains(&index) {
-                println!("removing node {}", index);
-                self.remove_node(index);
-            }
-        }
-    }
-            
-    pub fn show_slice(&self, slice: &HashSet<usize>) {
-        let mut output = String::from("=== Flow Graph ===\n\n");
-        for i in 1..self.nodes.len() {
-            let ref node = self.nodes[i];
-            if !node.deleted {
-                output.push_str(format!("=== Node {} [{:x}] ===", i,
-                    self.initial_instruction(i).unwrap()).as_str());
-                let mut has_instructions = false;
-                for inst in node.insts.iter() {
-                    if slice.contains(&inst) {
-                        has_instructions = true;
-                        output.push_str(
-                            format!("\n{}", self.listing.get(*inst).unwrap()).as_str());
-                    }
-                }
-                if has_instructions {
-                    if !node.inbound_edges.is_empty() {
-                        let mut inbound = String::new();
-                        for edge in node.inbound_edges.iter() {
-                            inbound.push_str(format!("{} ", self.edges[*edge].get_from()).as_str());
-                        }
-                        output.push_str(format!("\nInbound nodes: {}", inbound).as_str());
-                    }
-                    if !node.outbound_edges.is_empty() {
-                        let mut outbound = String::new();
-                        for edge in node.outbound_edges.iter() {
-                            outbound.push_str(format!("{} ", self.edges[*edge].get_to()).as_str());
-                        }
-                        output.push_str(format!("\nOutbound nodes: {}", outbound).as_str());
-                    }
-                }
-                output.push_str("\n"); 
-            }
-        }
-
-        println!("{}", output)
     }
 
     pub fn log_state_count(&self) {

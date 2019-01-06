@@ -70,8 +70,7 @@ pub fn decode_instruction(buffer: &[u8], offset: usize) -> Result<Instruction, S
             .. Instruction::new(Mnemonic::DRW)
         }),
         0xE000...0xEfff => decode_read_keypress(x, kk),
-        0xF000...0xFfff => decode_fxkk(x, kk), 
-        _ => panic!("Instruction code not covered by match: {:x}", code)
+        0xF000...0xFfff => decode_fxkk(x, kk)
     }
 }
 
