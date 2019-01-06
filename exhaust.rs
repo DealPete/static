@@ -1,5 +1,5 @@
 use defs::main::*;
-use graph::state_flow_graph::StateFlowGraph;
+use graph::state::StateFlowGraph;
 
 pub enum LogType {
     StateCount,

@@ -1,5 +1,5 @@
 use defs::main::*;
-use graph::flow_graph::*;
+use graph::flow::*;
 
 pub fn analyse<I, A, Z>(file_buffer: &Vec<u8>, architecture: A, analyzer: Z, entry_offset: usize) -> Result<FlowGraph<I>, String>
     where I: InstructionTrait,

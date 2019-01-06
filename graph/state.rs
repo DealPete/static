@@ -28,18 +28,6 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         }
     }
 
-    pub fn from_listing(listing: Listing<I>) -> StateFlowGraph<I, S> {
-        StateFlowGraph {
-            listing: listing,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            states: Vec::new(),
-            inst_map: HashMap::new(),
-            state_map: HashMap::new(),
-            live_states: Vec::new()
-        }
-    }
-
     pub fn add_empty_node(&mut self) -> usize {
         self.nodes.push(Node::new());
         self.nodes.len() - 1

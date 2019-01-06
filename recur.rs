@@ -4,7 +4,7 @@ pub fn recursive_descent<I, A>(file_buffer: &Vec<u8>, architecture: A, entry_off
     where I: InstructionTrait,
           A: Architecture<I>
 {
-    let mut listing = Listing::with_entries([entry_offset].iter().cloned().collect());
+    let mut listing = Listing::with_entry(entry_offset);
 
     let mut unexplored = Vec::new();
     unexplored.push(entry_offset);

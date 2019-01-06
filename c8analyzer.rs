@@ -1,10 +1,10 @@
 use defs::main::*;
 use defs::set::*;
-use graph::state_flow_graph::StateFlowGraph;
+use graph::state::StateFlowGraph;
 use chip8::sim::Interpreter;
 use chip8::state::State;
 use chip8::arch::*;
-use graph::flow_graph::*;
+use graph::flow::*;
 use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::collections::HashMap;
