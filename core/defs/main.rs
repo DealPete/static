@@ -25,6 +25,7 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     fn is_call(&self) -> bool;
     fn is_return(&self) -> bool;
     fn is_rel_branch(&self) -> bool;
+    fn writes_memory(&self) -> bool;
 
     // successors(instruction, offset) ->
     //  (targets, calls, branch, indeterminate)
@@ -33,7 +34,7 @@ pub trait InstructionTrait : Copy + Clone + fmt::Display {
     // file buffer.
     //
     // "targets" contains the non-call successor offsets.
-    // "calls" contains the successor offset that are function calls.
+    // "calls" contains the successor offsets that are function calls.
     // "branch" is true if the instruction ends a basic block.
     //
     // "indeterminate" is true if the set of successor offsets

@@ -3,8 +3,7 @@ use chip8::dis;
 use std::fmt;
 
 #[derive(Copy, Clone)]
-pub struct Chip8 {
-}
+pub struct Chip8 {}
 
 impl<'a> Architecture<Instruction> for Chip8 {
     fn decode_instruction(&self, buffer: &[u8], offset: usize) -> Result<Instruction, String> {
@@ -98,6 +97,14 @@ impl InstructionTrait for Instruction {
 
     fn length(&self) -> usize {
         2
+    }
+
+    fn writes_memory(&self) -> bool {
+        if let Some(Operand::Pointer) = self.op1 {
+            return true;
+        }
+
+        false
     }
 
     fn successors(&self, offset: usize) -> (Vec<usize>, Vec<usize>, bool, bool) {

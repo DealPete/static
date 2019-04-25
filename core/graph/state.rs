@@ -78,10 +78,6 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         self.get_next_nodes(0)
     }
 
-    pub fn get_instructions_at(&self, node: usize) -> &[usize] {
-        &self.nodes[node].insts
-    }
-
     pub fn get_previous_nodes(&self, node_index: usize) -> Vec<usize> {
         let mut nodes = Vec::new();
         for edge_index in (&self.nodes[node_index]).inbound_edges.iter() {
@@ -100,34 +96,37 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         nodes
     }
 
-    pub fn get_states_at_node(&self, node_index: usize) -> Vec<usize> {
-        self.nodes[node_index].states.iter().cloned().collect()
-    }
-
-    pub fn remove_node(&mut self, node_index: usize) {
+    pub fn remove_node(&mut self, node_index: usize) -> Result<(), String> {
         let node = self.nodes[node_index].clone();
         for in_edge in node.inbound_edges.iter() {
             for out_edge in node.outbound_edges.iter() {
                 let from = self.edges[*in_edge].get_from();
                 let to = self.edges[*out_edge].get_to();
-                println!("adding edge from {} to {}", from, to);
-                self.add_edge(from, to);
+                self.add_edge(from, to)?;
             }
         }
 
         for in_edge in node.inbound_edges.iter() {
             let from = self.edges[*in_edge].get_from();
-            println!("removing edge from {} to {}", from, node_index);
             self.nodes[from].remove_edge(*in_edge);
         }
 
         for out_edge in node.outbound_edges.iter() {
             let to = self.edges[*out_edge].get_to();
-            println!("removing edge from {} to {}", node_index, to);
             self.nodes[to].remove_edge(*out_edge);
         }
 
         self.nodes[node_index].deleted = true;
+
+        Ok(())
+    }
+
+    pub fn get_instructions_at(&self, node: usize) -> &[usize] {
+        &self.nodes[node].insts
+    }
+
+    pub fn get_states_at_node(&self, node_index: usize) -> Vec<usize> {
+        self.nodes[node_index].states.iter().cloned().collect()
     }
 
     pub fn has_edge(&self, source: usize, target: usize) -> bool {
@@ -140,27 +139,40 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         false
     }
 
-    pub fn add_edge(&mut self, source: usize, target: usize) {
+    pub fn add_edge(&mut self, source: usize, target: usize) -> Result<(), String> {
+        if source >= self.nodes.len() {
+            return Err(format!("Trying to add edge from non-existant node {}.", source));
+        }
+
+        if target >= self.nodes.len() {
+            return Err(format!("Trying to add edge to non-existant node {}.", source));
+        }
+
         if !self.has_edge(source, target) {
             self.nodes[source].outbound_edges.insert(self.edges.len());
             self.nodes[target].inbound_edges.insert(self.edges.len());
             self.edges.push(Edge::new(source, target));
         }
+
+        Ok(())
     }
 
-    pub fn get_inst(&self, address: usize) -> Option<&Meta<I>> {
-        self.listing.instructions.get(&address)
+    pub fn get_inst(&self, offset: usize) -> Option<&Meta<I>> {
+        self.listing.instructions.get(&offset)
     }
 
-    pub fn add_label(&mut self, address: usize) {
-        self.listing.add_label(address);
+    pub fn add_label(&mut self, offset: usize) {
+        self.listing.add_label(offset);
     }
 
     pub fn initial_instruction(&self, node_index: usize) -> Result<usize, String> {
         if node_index >= self.nodes.len() {
             Err(String::from("Node doesn't exist."))
         } else {
-            Ok(*self.nodes[node_index].insts.first().unwrap())
+            match self.nodes[node_index].insts.first() {
+                None => Err(String::from(format!("Node {} has no instructions", node_index))),
+                Some(offset) => Ok(*offset)
+            }
         }
     }
 
@@ -191,12 +203,12 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
     // instructions coming after. It also adds an edge between the end of the
     // first node and the beginning of the second.
     // Return value is the index of the second node.
-    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize) -> usize {
+    pub fn split_node_at(&mut self, node_index: usize, inst_offset: usize) -> Result<usize, String> {
         match self.nodes[node_index].insts.iter().position(|&r| r == inst_offset) {
             None => panic!("can't find offset to split at in node {}, instruction 0x{:x}.", node_index, inst_offset),
             Some(index) => {
                 if index == 0 {
-                    return node_index;
+                    return Ok(node_index);
                 }
 
                 let mut new_node = Node::new();
@@ -212,7 +224,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
 
                 self.nodes[node_index].outbound_edges = self.nodes[new_node_index].outbound_edges.clone();
                 self.nodes[new_node_index].outbound_edges.clear();
-                self.add_edge(new_node_index, node_index);
+                self.add_edge(new_node_index, node_index)?;
 
                 for inst in self.nodes[new_node_index].insts.iter() {
                     self.inst_map.insert(*inst, new_node_index);
@@ -222,7 +234,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
                     self.state_map.insert(*state, new_node_index);
                 }
 
-                node_index
+                Ok(node_index)
             }
         }
     }
@@ -247,20 +259,22 @@ impl<I: InstructionTrait, S: StateTrait<S>> StateFlowGraph<I, S> {
         }
     }
 
-    pub fn extend_with_state(&mut self, inst_offset: usize, new_inst_offset: usize, state: S) {
+    pub fn extend_with_state(&mut self, inst_offset: usize, new_inst_offset: usize, state: S) -> Result<(), String> {
         let node_index = self.get_node_at(inst_offset)
             .expect("No node at instruction offset");
         match self.get_node_at(new_inst_offset) {
             None => {
                 let new_node_index = self.add_node_with_state_at(state, new_inst_offset);
-                self.add_edge(node_index, new_node_index);
+                self.add_edge(node_index, new_node_index)?;
             },
             Some(target_node_index) => {
-               let new_node_index = self.split_node_at(target_node_index, new_inst_offset);
-                self.add_edge(node_index, new_node_index);
+               let new_node_index = self.split_node_at(target_node_index, new_inst_offset)?;
+                self.add_edge(node_index, new_node_index)?;
                 self.add_state(state, new_node_index);
             }
         };
+
+        Ok(())
     }
 
     pub fn add_state(&mut self, mut state: S, node_index: usize) {
@@ -428,7 +442,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> fmt::Display for StateFlowGraph<I, S
             if !node.deleted {
                 output.push_str(format!("Node {}\n========\n", i).as_str());
                 match node.insts.len() {
-                    0 => (),//panic!("There shouldn't be a node with 0 instructions."),
+                    0 => (),
                     1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
                     _ => output.push_str(format!("Instructions 0x{:x} through 0x{:x}\n",
                         node.insts[0], node.insts[node.insts.len()-1]).as_str())
@@ -468,7 +482,7 @@ impl<I: InstructionTrait, S: StateTrait<S>> fmt::Debug for StateFlowGraph<I, S> 
             output.push_str(format!("Node {}\n========\n", i).as_str());
             let ref node = self.nodes[i];
             match node.insts.len() {
-                0 => (),//panic!("There shouldn't be a node with 0 instructions."),
+                0 => (),
                 1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
                 _ => output.push_str(format!("Instructions 0x{:x} through 0x{:x}\n",
                     node.insts[0], node.insts[node.insts.len()-1]).as_str())
@@ -499,3 +513,118 @@ impl<I: InstructionTrait, S: StateTrait<S>> fmt::Debug for StateFlowGraph<I, S> 
     }
 }
 
+pub struct Slice<I: InstructionTrait, S: StateTrait<S>> {
+    graph: StateFlowGraph<I, S>,
+    offsets: HashSet<usize>
+}
+
+impl<I: InstructionTrait, S: StateTrait<S>> Slice<I, S> {
+    pub fn with_offsets(offsets: HashSet<usize>) -> Slice<I, S> {
+        Slice {
+            graph: StateFlowGraph::new(),
+            offsets
+        }
+    }
+
+    pub fn contains(&self, offset: &usize) -> bool {
+        self.offsets.contains(offset)
+    }
+
+    pub fn add_node_with_insts(&mut self, offsets: &[usize]) -> usize {
+        self.graph.add_node_with_insts(offsets)
+    }
+
+    pub fn get_node_at(&self, offset: usize) -> Option<usize> {
+        self.graph.get_node_at(offset)
+    }
+
+    pub fn get_entry_nodes(&self) -> Vec<usize> {
+        self.graph.get_entry_nodes()
+    }
+
+    pub fn get_next_nodes(&self, node_index: usize) -> Vec<usize> {
+        self.graph.get_next_nodes(node_index)
+    }
+
+    pub fn remove_node(&mut self, node_index: usize) -> Result<(), String> {
+        self.graph.remove_node(node_index)
+    }
+
+    pub fn get_instructions_at(&self, node: usize) -> &[usize] {
+        self.graph.get_instructions_at(node)
+    }
+
+    pub fn add_edge(&mut self, source: usize, target: usize) -> Result<(), String> {
+        self.graph.add_edge(source, target)
+    }
+
+    pub fn get_inst(&self, offset: usize) -> Option<&Meta<I>> {
+        self.graph.get_inst(offset)
+    }
+
+    pub fn initial_instruction(&self, node_index: usize) -> Result<usize, String> {
+        self.graph.initial_instruction(node_index)
+    }
+
+    pub fn final_instruction(&self, node_index: usize) -> Result<Option<&usize>, String> {
+        self.graph.final_instruction(node_index)
+    }
+
+    pub fn add_inst_to_listing(&mut self, offset: usize, instruction: I) {
+        self.graph.add_inst_to_listing(offset, instruction);
+    }
+
+    pub fn next_live_state(&mut self) -> Option<S> {
+        self.graph.next_live_state()
+    }
+
+    pub fn add_state(&mut self, state: S, node_index: usize) {
+        self.graph.add_state(state, node_index);
+    }
+
+    pub fn log_state_count(&self) {
+        self.graph.log_state_count();
+    }
+}
+
+impl<I: InstructionTrait, S: StateTrait<S>> fmt::Display for Slice<I, S> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut output = String::from("\n========= Flow Graph =========\n");
+
+        for i in 0..self.graph.nodes.len() {
+            let ref node = self.graph.nodes[i];
+            if !node.deleted {
+                output.push_str(format!("\nNode {}\n========\n", i).as_str());
+                match node.insts.len() {
+                    0 => (),
+                    1 => output.push_str(format!("Instruction 0x{:x}\n", node.insts[0]).as_str()),
+                    _ => output.push_str(format!("Instructions 0x{:x} through 0x{:x}\n",
+                        node.insts[0], node.insts[node.insts.len()-1]).as_str())
+                }
+                for inst in node.insts.iter() {
+                    if self.offsets.contains(inst) {
+                        output.push_str(
+                            format!("{}\n", self.graph.listing.get(*inst).unwrap()).as_str());
+                    }
+                }
+                if !node.inbound_edges.is_empty() {
+                    let mut inbound = String::new();
+                    for edge in node.inbound_edges.iter() {
+                        inbound.push_str(format!("{} ", self.graph.edges[*edge].get_from()).as_str());
+                    }
+                    output.push_str(format!("Inbound nodes: {}\n", inbound).as_str());
+                }
+                if !node.outbound_edges.is_empty() {
+                    let mut outbound = String::new();
+                    for edge in node.outbound_edges.iter() {
+                        outbound.push_str(format!("{} ", self.graph.edges[*edge].get_to()).as_str());
+                    }
+                    output.push_str(format!("Outbound nodes: {}\n", outbound).as_str());
+                }
+            }
+        }
+
+        output.push_str(format!("Total States: {}\n", self.graph.states.len()).as_str());
+        write!(f, "{}", output)
+    }
+}

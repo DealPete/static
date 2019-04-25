@@ -1,11 +1,5 @@
-pub mod analyse;
-pub mod defs;
-pub mod graph;
-pub mod chip8;
-mod c8analyzer;
-
 use chip8::arch::*;
-use graph::flow_graph::{Function, FlowGraph, CallGraph};
+use graph::flow::{Function, FlowGraph};
 
 static PROGRAM: &str =
 "#include \"api.h\"
@@ -131,168 +125,130 @@ remove:
 \t$(RM) game makefile code.c
 ";
 
-fn main() {
-    use std::env;
-    use std::io::Read;
-    use std::io::Write;
-    use std::fs::File;
-    use std::path::Path;
-
-	if let Some(arg) = env::args().nth(1) {
-        let input_file = arg.clone();
-        let path = Path::new(&input_file);
-        let stem = path.file_stem()
-            .expect("argument has no stem").to_str().unwrap();
-
-		let mut file = File::open(arg).expect(
-			"Failed to open file.");
-		let mut buffer = Vec::new();
-		file.read_to_end(&mut buffer).expect(
-			"Failed to read into buffer.");
-
-        let result = analyse::analyse(
-            &buffer, chip8::arch::Chip8 {},
-            c8analyzer::Chip8Analyzer {}, 0);
-
-        match result {
-            Ok(graph) => {
-                let mut file = File::create("code.c")
-                    .expect("Couldn't create output file.");
-
-                let call_graph = match graph.construct_call_graph() {
-                    Err(err) => panic!(err),
-                    Ok(call_graph) => call_graph
-                };
-
-                let source = match source_string(graph, call_graph, stem, buffer) {
-                    Err(err) => panic!(err),
-                    Ok(source) => source
-                };
-                
-                file.write_all(source.as_bytes())
-                    .expect("Couldn't write output file.");
-
-                let mut makefile = File::create("makefile")
-                    .expect("Couldn't create makefile.");
-
-                makefile.write_all(MAKEFILE.as_bytes())
-                    .expect("Couldn't write makefile.");
-            },
-            Err(error) => println!("{}", error)
-        }
-    } else {
-		println!("usage: recompile <file-to-recompile>");
-    }
+pub struct Compiler {
+    pub old_shift_behavior: bool
 }
 
-fn source_string(graph: FlowGraph<Instruction>, mut call_graph: CallGraph, file_stem: &str, data: Vec<u8>) -> Result<String, String> {
-    let analyzer = c8analyzer::Chip8Analyzer {};
+impl Compiler {
+    pub fn makefile() -> String {
+        MAKEFILE.into()
+    }
 
-    for offset in graph.listing().clone() {
-        if graph.get_inst(offset).unwrap().unwrap().mnemonic == Mnemonic::DRW {
-            let offsets = analyzer.possible_I_values(&data, &graph, &call_graph, offset)?;
-            println!("For offset {}, I can be {:x?}", offset, offsets);
+    pub fn source_string(&self, graph: FlowGraph<Instruction>, file_stem: &str, data: Vec<u8>) -> Result<String, String> {
+        let mut data_string = String::new();
+
+        for byte in data {
+            data_string.push_str(format!("0x{:x}, ", byte).as_str());
         }
-    }
 
-    let mut data_string = String::new();
+        let mut headers = String::new();
+        let mut call_graph = graph.call_graph()?;
 
-    for byte in data {
-        data_string.push_str(format!("0x{:x}, ", byte).as_str());
-    }
-
-    let mut headers = String::new();
-
-    for function in call_graph.functions().iter().skip(1) {
-        let first_offset = graph.initial_instruction(function.nodes()[0])?.unwrap();
-        headers.push_str(format!(
-            "void f{:x}();\n", first_offset + 0x200).as_str());
-    }
-
-    let mut functions = String::new();
-    let mut main = String::new();
-
-    while let Some(function) = call_graph.pop() {
-        if call_graph.functions().len() > 0 {
-            let address = graph.initial_instruction(function.nodes()[0])?.unwrap() + 0x200;
-            functions.push_str(format!("void f{:x}() {{\n", address).as_str());
-            functions.push_str(compile_function(&graph, function, false)?.as_str());
-            functions.push_str("}\n\n");
-        } else {
-            main = compile_function(&graph, function, true)?;
+        for function in call_graph.functions().iter().skip(1) {
+            let first_offset = graph.initial_instruction(function.nodes()[0])?.unwrap();
+            headers.push_str(format!(
+                "void f{:x}();\n", first_offset + 0x200).as_str());
         }
-    }
 
-    Ok(PROGRAM.replace("{program}", &data_string)
-              .replace("{filename}", file_stem)
-              .replace("{headers}", &headers)
-              .replace("{functions}", &functions)
-              .replace("{main}", &main))
-}
+        let mut functions = String::new();
+        let mut main = String::new();
 
-fn compile_function(graph: &FlowGraph<Instruction>, function: Function, main: bool) -> Result<String, String> {
-    let mut output = String::new();
-    let mut node_outputs = Vec::new();
-
-    for node in function.nodes() {
-        if let Some(offset) = graph.initial_instruction(*node)? {
-            node_outputs.push((offset, compile_node(&graph, *node, main)));
+        while let Some(function) = call_graph.pop() {
+            if call_graph.functions().len() > 0 {
+                let address = graph.initial_instruction(function.nodes()[0])?.unwrap() + 0x200;
+                functions.push_str(format!("void f{:x}() {{\n", address).as_str());
+                functions.push_str(self.compile_function(&graph, function, false)?.as_str());
+                functions.push_str("}\n\n");
+            } else {
+                main = self.compile_function(&graph, function, true)?;
+            }
         }
+
+        Ok(PROGRAM.replace("{program}", &data_string)
+                  .replace("{filename}", file_stem)
+                  .replace("{headers}", &headers)
+                  .replace("{functions}", &functions)
+                  .replace("{main}", &main))
     }
 
-    node_outputs.sort_by_key(|&(key, _)| key);
+    fn compile_function(&self, graph: &FlowGraph<Instruction>, function: Function, main: bool) -> Result<String, String> {
+        let mut output = String::new();
+        let mut node_outputs = Vec::new();
 
-    for (_, node_output) in node_outputs {
-        output.push_str(node_output.as_str());
+        for node in function.nodes() {
+            if let Some(offset) = graph.initial_instruction(*node)? {
+                node_outputs.push((offset, self.compile_node(&graph, *node, main)?));
+            }
+        }
+
+        node_outputs.sort_by_key(|&(key, _)| key);
+
+        for (_, node_output) in node_outputs {
+            output.push_str(node_output.as_str());
+        }
+
+        Ok(output)
     }
 
-    Ok(output)
-}
+    fn compile_node(&self, graph: &FlowGraph<Instruction>, node: usize, main: bool) -> Result<String, String> {
+        let node_address = graph.initial_instruction(node).unwrap()
+            .expect(format!("no instruction at node {}", node).as_str()) + 0x200;
+        let mut output = format!("\nl{:x}:\n", node_address);
+        
+        for offset in graph.get_instructions_at(node) {
+            let inst = graph.get_inst(*offset)
+                .expect(format!("no instruction at offset {:x}", offset).as_str())
+                .unwrap();
 
-fn compile_node(graph: &FlowGraph<Instruction>, node: usize, main: bool) -> String {
-    let node_address = graph.initial_instruction(node).unwrap()
-        .expect(format!("no instruction at node {}", node).as_str()) + 0x200;
-    let mut output = format!("\nl{:x}:\n", node_address);
-    
-    for offset in graph.get_instructions_at(node) {
-        let inst = graph.get_inst(*offset)
-            .expect(format!("no instruction at offset {:x}", offset).as_str())
-            .unwrap();
+            output.push_str("\t");
+            output.push_str( match inst.mnemonic {
+                Mnemonic::LOW => "lores();\n".into(),
+                Mnemonic::HIGH => "hires();\n".into(),
+                Mnemonic::CLS => "clear_screen();\n".into(),
+                Mnemonic::AND => and(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::OR => or(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::XOR => xor(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::SHL => self.shl(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::SHR => self.shr(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::LD => load(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::LDPTR => load_ptr(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::LDBCD => format!("load_bcd(memory + I, {});\n",
+                    encode_op(inst.unpack_op1())),
+                Mnemonic::ADD => add(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::SUB => sub(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::SUBN => subn(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::SNE => skip(false, *offset, inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::SE => skip(true, *offset, inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::JP => jump(graph, *offset, inst.unpack_op1(), inst.op2)?,
+                Mnemonic::SKP => skip_key(true, *offset, inst.unpack_op1()),
+                Mnemonic::SKNP => skip_key(false, *offset, inst.unpack_op1()),
+                Mnemonic::DRW => draw(inst.unpack_op1(), inst.unpack_op2(), inst.unpack_op3()),
+                Mnemonic::RND => random(inst.unpack_op1(), inst.unpack_op2()),
+                Mnemonic::CALL => call(inst.unpack_op1()),
+                Mnemonic::RET => if main { "exit(0);\n".into() } else { "return;\n".into() },
+                Mnemonic::EXIT => "exit(0);\n".into(),
+                Mnemonic::SCL => "scroll_left();\n".into(),
+                Mnemonic::SCR => "scroll_right();\n".into(),
+                Mnemonic::SCD => format!("scroll_down({});\n", encode_op(inst.unpack_op1())),
+            }.as_str());
+        }
 
-        output.push_str("\t");
-        output.push_str( match inst.mnemonic {
-            Mnemonic::LOW => "lores();\n".into(),
-            Mnemonic::HIGH => "hires();\n".into(),
-            Mnemonic::CLS => "clear_screen();\n".into(),
-            Mnemonic::AND => and(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::OR => or(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::XOR => xor(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SHL => shl(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SHR => shr(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::LD => load(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::LDPTR => load_ptr(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::LDBCD => format!("load_bcd(memory + I, {});\n",
-                encode_op(inst.unpack_op1())),
-            Mnemonic::ADD => add(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SUB => sub(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SUBN => subn(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SNE => skip(false, *offset, inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::SE => skip(true, *offset, inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::JP => jump(graph, *offset, inst.unpack_op1(), inst.op2),
-            Mnemonic::SKP => skip_key(true, *offset, inst.unpack_op1()),
-            Mnemonic::SKNP => skip_key(false, *offset, inst.unpack_op1()),
-            Mnemonic::DRW => draw(inst.unpack_op1(), inst.unpack_op2(), inst.unpack_op3()),
-            Mnemonic::RND => random(inst.unpack_op1(), inst.unpack_op2()),
-            Mnemonic::CALL => call(inst.unpack_op1()),
-            Mnemonic::RET => if main { "exit(0);\n".into() } else { "return;\n".into() },
-            Mnemonic::EXIT => "exit(0);\n".into(),
-            Mnemonic::SCL => "scroll_left();\n".into(),
-            Mnemonic::SCR => "scroll_right();\n".into(),
-            Mnemonic::SCD => format!("scroll_down({});\n", encode_op(inst.unpack_op1())),
-        }.as_str());
+        Ok(output)
     }
 
-    output
+    fn shl(&self, op1: Operand, op2: Operand) -> String {
+        let vx = encode_op(op1);
+        let vy = if self.old_shift_behavior { encode_op(op1) } else { encode_op(op2) };
+        format!("V[0xf] = {} & 0x80 ? 1 : 0;\n\t{} = {} << 1;\n",
+            vy, vx, vy)
+    }
+
+    fn shr(&self, op1: Operand, op2: Operand) -> String {
+        let vx = encode_op(op1);
+        let vy = if self.old_shift_behavior { encode_op(op1) } else { encode_op(op2) };
+        format!("V[0xf] = {} & 0x1 ? 1 : 0;\n\t{} = {} >> 1;\n",
+            vy, vx, vy)
+    }
 }
 
 fn add(op1: Operand, op2: Operand) -> String {
@@ -323,20 +279,6 @@ fn subn(op1: Operand, op2: Operand) -> String {
         vy, vx, vx, vy, vx)
 }
 
-fn shl(op1: Operand, op2: Operand) -> String {
-    let vx = encode_op(op1);
-    let vy = encode_op(op2);
-    format!("V[0xf] = {} & 0x80 ? 1 : 0;\n\t{} = {} << 1;\n",
-        vx, vx, vy)
-}
-
-fn shr(op1: Operand, op2: Operand) -> String {
-    let vx = encode_op(op1);
-    let vy = encode_op(op2);
-    format!("V[0xf] = {} & 0x1 ? 1 : 0;\n\t{} = {} >> 1;\n",
-        vx, vx, vy)
-}
-
 fn and(op1: Operand, op2: Operand) -> String {
     let lhs = encode_op(op1);
     format!("{} = {} & {};\n", lhs, lhs, encode_op(op2))
@@ -352,10 +294,10 @@ fn xor(op1: Operand, op2: Operand) -> String {
     format!("{} = {} ^ {};\n", lhs, lhs, encode_op(op2))
 }
 
-fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option<Operand>) -> String {
+fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option<Operand>) -> Result<String, String> {
     match op1 {
         Operand::Address(address) => {
-            format!("goto l{:x};\n", address)
+            Ok(format!("goto l{:x};\n", address))
         },
         Operand::V(0) => match op2 {
             Some(Operand::Address(address)) => {
@@ -366,7 +308,12 @@ fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option
                 for target in targets {
                     let target_offset = graph.initial_instruction(target)
                         .unwrap().unwrap();
-                    let v_0 = target_offset + 0x200 - address as usize;
+                    if (target_offset + 0x200) < address as usize {
+                        return Err(format!(
+                            "Instruction 'JMP V0, {:x}' at offset 0x{:x} leads to offset 0x{:x}",
+                            address, offset, target_offset));
+                    }
+                    let v_0 = (target_offset + 0x200) - address as usize;
                     output.push_str(format!("\t\tcase {}:\n\t\tgoto l{:x};\n\n",
                         v_0, target_offset + 0x200).as_str());
                 }
@@ -379,11 +326,11 @@ fn jump(graph: &FlowGraph<Instruction>, offset: usize, op1: Operand, op2: Option
 ",
                     offset + 0x200).as_str());
 
-                output
+                Ok(output)
             },
-            _ => panic!("Invalid operand for JMP V0, ?.")
+            _ => Err(String::from("Invalid operand for JMP V0, ?."))
         },
-        _ => panic!("Invalid operand for JMP.")
+        _ => Err(String::from("Invalid operand for JMP."))
     }
 }
  

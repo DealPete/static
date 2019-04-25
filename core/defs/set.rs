@@ -137,6 +137,13 @@ impl Value {
             &Value::Byte(ref byte) => byte.len()
         }
     }
+
+    pub fn plus(self, addendum: usize) -> Value {
+        match self {
+            Value::Word(word) => Value::Word(word.plus(addendum as u16)),
+            Value::Byte(byte) => Value::Byte(byte.plus(addendum as u8))
+        }
+    }
 }
 
 impl fmt::Debug for Value {
@@ -237,6 +244,20 @@ impl Word {
             Word::Int(ref words) => words.len(),
             Word::Bytes(ref bytel, ref byteh) =>
                 bytel.clone().combine(byteh.clone()).len()
+        }
+    }
+
+    pub fn plus(self, addendum: u16) -> Word {
+        match self {
+            Word::Undefined => Word::Undefined,
+            Word::AnyValue => Word::AnyValue,
+            Word::Int(words) => Word::Int(
+                words.iter().map(
+                    |word| word.wrapping_add(addendum)
+                ).collect()
+            ),
+            Word::Bytes(_, _) =>
+                panic!("adding to split word not implemented.")
         }
     }
 
@@ -472,7 +493,7 @@ impl Byte {
 
     pub fn from_range(lower: u8, upper: u8) -> Byte {
         let mut set = HashSet::new();
-        for byte in lower..upper+1 {
+        for byte in lower..=upper {
             set.insert(byte);
         }
         Byte::Int(set)
