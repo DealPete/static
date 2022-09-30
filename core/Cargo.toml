@@ -1,0 +1,5 @@
+[package]
+name = "core"
+version = "0.1.0"
+authors = ["Peter Deal <pdeal@nl.rogers.com>"]
+edition = "2018"

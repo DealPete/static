@@ -1,0 +1,66 @@
+   Compiling static v0.1.0 (/Users/dealpete/repos/static/core)
+error[E0308]: mismatched types
+  --> src/exhaust.rs:67:25
+   |
+43 |                     return Err(error)
+   |                            ---------- expected because of this statement
+...
+67 |                         graph.extend_with_state(inst_offset, Z::next_inst_offset(&new_state), new_state) 
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^- help: try adding a semicolon: `;`
+   |                         |
+   |                         expected (), found enum `std::result::Result`
+   |
+   = note: expected type `()`
+              found type `std::result::Result<(), std::string::String>`
+
+error[E0277]: the trait bound `T: std::fmt::LowerHex` is not satisfied
+  --> src/defs/range.rs:69:37
+   |
+69 |                     format!("{:x}", range.min)
+   |                                     ^^^^^^^^^ the trait `std::fmt::LowerHex` is not implemented for `T`
+   |
+   = help: consider adding a `where T: std::fmt::LowerHex` bound
+   = note: required by `std::fmt::LowerHex::fmt`
+
+error[E0277]: the trait bound `T: std::fmt::LowerHex` is not satisfied
+  --> src/defs/range.rs:71:44
+   |
+71 |                     format!("{:x}...{:x}", range.min, range.max)
+   |                                            ^^^^^^^^^ the trait `std::fmt::LowerHex` is not implemented for `T`
+   |
+   = help: consider adding a `where T: std::fmt::LowerHex` bound
+   = note: required by `std::fmt::LowerHex::fmt`
+
+error[E0277]: the trait bound `T: std::fmt::LowerHex` is not satisfied
+  --> src/defs/range.rs:71:55
+   |
+71 |                     format!("{:x}...{:x}", range.min, range.max)
+   |                                                       ^^^^^^^^^ the trait `std::fmt::LowerHex` is not implemented for `T`
+   |
+   = help: consider adding a `where T: std::fmt::LowerHex` bound
+   = note: required by `std::fmt::LowerHex::fmt`
+
+error[E0308]: mismatched types
+   --> src/defs/range.rs:120:22
+    |
+120 |             if max + 1 < next_range.min {
+    |                      ^ expected type parameter, found integral variable
+    |
+    = note: expected type `T`
+               found type `{integer}`
+
+error[E0369]: binary operation `<` cannot be applied to type `<T as std::ops::Add>::Output`
+   --> src/defs/range.rs:120:16
+    |
+120 |             if max + 1 < next_range.min {
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: an implementation of `std::cmp::PartialOrd` might be missing for `<T as std::ops::Add>::Output`
+
+error: aborting due to 6 previous errors
+
+Some errors occurred: E0277, E0308, E0369.
+For more information about an error, try `rustc --explain E0277`.
+error: Could not compile `static`.
+
+To learn more, run the command again with --verbose.
